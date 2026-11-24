@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  computeBinForecasts,
   filterBins,
   filterLedger,
+  formatDurationHours,
   formatUtcTime,
   getBinStatusDisplay,
   getCategoryMeta,
@@ -77,6 +79,13 @@ test("filterBins filters by status and search term", () => {
   assert.equal(filterBins(sampleBins, "overflow_alert", "").length, 1);
   assert.equal(filterBins(sampleBins, "all", "Metro").length, 1);
   assert.equal(filterBins(sampleBins, "nominal", "AIIMS").length, 0);
+
+  const forecasts = computeBinForecasts(sampleBins);
+  assert.equal(forecasts[0].bin_code, "BIN-A01-Y");
+  assert.equal(forecasts[0].risk_level, "imminent");
+  assert.equal(forecasts[1].risk_level, "stable");
+  assert.equal(formatDurationHours(1.5), "1h 30m");
+  assert.equal(formatDurationHours(0), "At capacity");
 });
 
 test("filterLedger and formatUtcTime behave deterministically", () => {

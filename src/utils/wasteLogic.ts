@@ -230,3 +230,62 @@ export const CLINICAL_SPECIMENS: ClinicalSpecimen[] = [
     expected_category: "yellow",
   },
 ];
+
+export function formatDurationHours(hours: number): string {
+  if (!Number.isFinite(hours) || hours <= 0) return "At capacity";
+  const totalMinutes = Math.round(hours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+export interface LocalBinForecast {
+  bin_code: string;
+  fill_rate_pct_per_hr: number;
+  hours_to_full: number;
+  risk_level: "imminent" | "upcoming" | "stable";
+}
+
+export function computeBinForecasts(bins: SmartBin[]): LocalBinForecast[] {
+  return bins
+    .map((b) => {
+      const ward = b.ward.toLowerCase();
+      let rate = 3.2;
+      if (ward.includes("icu") || ward.includes("emergency") || ward.includes("trauma")) {
+        rate = 5.8;
+      } else if (ward.includes("ot") || ward.includes("dialysis") || ward.includes("phlebotomy")) {
+        rate = 4.6;
+      } else if (ward.includes("lab") || ward.includes("microbiology") || ward.includes("recovery")) {
+        rate = 3.5;
+      }
+      if (b.category === "yellow") rate *= 1.15;
+      else if (b.category === "red") rate *= 1.1;
+      else if (b.category === "white") rate *= 0.95;
+      else rate *= 0.85;
+
+      if (b.gas_ppm >= 50) rate += 0.8;
+      else if (b.gas_ppm >= 30) rate += 0.35;
+
+      const roundedRate = Math.round(rate * 100) / 100;
+      const hoursToFull =
+        Math.round((Math.max(0, 100 - b.fill_level) / Math.max(0.5, roundedRate)) * 10) / 10;
+
+      const risk_level: "imminent" | "upcoming" | "stable" =
+        b.fill_level >= 85 || hoursToFull <= 4
+          ? "imminent"
+          : b.fill_level >= 60 || hoursToFull <= 12
+          ? "upcoming"
+          : "stable";
+
+      return {
+        bin_code: b.bin_code,
+        fill_rate_pct_per_hr: roundedRate,
+        hours_to_full: hoursToFull,
+        risk_level,
+      };
+    })
+    .sort((a, b) => a.hours_to_full - b.hours_to_full);
+}
+

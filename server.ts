@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
-const PYTHON_PORT = Number(process.env.PYTHON_PORT || 8000);
+const PYTHON_PORT = Number(process.env.PYTHON_PORT || 8001);
 const IS_PROD = process.env.NODE_ENV === "production";
 
 let pythonProc: ChildProcess | null = null;

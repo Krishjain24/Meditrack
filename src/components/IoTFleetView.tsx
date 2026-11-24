@@ -1,9 +1,15 @@
 import { useState } from "react";
-import { Lock, Plus, RefreshCw, Search, Unlock } from "lucide-react";
-import { completeBinCollection, sendBinTelemetryAction } from "../api/client";
-import type { DashboardPayload } from "../types/meditrack";
+import { Clock, Lock, Plus, RefreshCw, Search, Unlock } from "lucide-react";
+import {
+  completeBinCollection,
+  createPickupRequest,
+  sendBinTelemetryAction,
+} from "../api/client";
+import type { DashboardPayload, PredictiveAlert } from "../types/meditrack";
 import {
   filterBins,
+  formatDurationHours,
+  formatUtcTime,
   getBinStatusDisplay,
   getCategoryMeta,
 } from "../utils/wasteLogic";
@@ -27,8 +33,41 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
   const [busyBin, setBusyBin] = useState<string | null>(null);
   const [ticking, setTicking] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [dispatchMsg, setDispatchMsg] = useState<string>("");
 
   const filtered = filterBins(data.bins, statusFilter, searchQuery);
+  const forecasts = data.predictive_alerts ?? [];
+  const forecastMap = new Map<string, PredictiveAlert>(
+    forecasts.map((f) => [f.bin_code, f])
+  );
+  const proactiveAlerts = forecasts.filter(
+    (f) => f.risk_level === "imminent" || f.risk_level === "upcoming"
+  );
+
+  async function handlePreDispatch(alert: PredictiveAlert) {
+    setBusyBin(alert.bin_code);
+    setErrorMsg("");
+    setDispatchMsg("");
+    try {
+      const res = await createPickupRequest({
+        facility_name: alert.facility_name,
+        category: alert.category,
+        priority: alert.risk_level === "imminent" ? "critical" : "high",
+        bin_code: alert.bin_code,
+        notes: `Predictive alert pre-dispatch: ${alert.fill_level.toFixed(0)}% full (+${alert.fill_rate_pct_per_hr}%/hr), 100% forecast in ${formatDurationHours(alert.hours_to_full)}`,
+      });
+      onDataUpdated(res.dashboard);
+      setDispatchMsg(
+        `Pre-dispatched pickup ticket ${res.alert_code} for ${alert.bin_code}.`
+      );
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error ? err.message : "Failed to pre-dispatch pickup"
+      );
+    } finally {
+      setBusyBin(null);
+    }
+  }
 
   async function handleTelemetryTick() {
     setTicking(true);
@@ -125,6 +164,108 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
         </div>
       )}
 
+      {dispatchMsg && (
+        <div className="p-3 text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg">
+          {dispatchMsg}
+        </div>
+      )}
+
+      {/* Proactive Predictive Capacity Alerts */}
+      <section
+        aria-labelledby="predictive-alerts-heading"
+        className="bg-white border border-slate-200 rounded-xl p-5 space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2
+              id="predictive-alerts-heading"
+              className="text-base font-semibold text-slate-900"
+            >
+              Predictive Capacity Alerts (100% Fill Forecast)
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Proactive forecast estimating hours until 100% capacity from ward fill velocity and bio-gas VOC telemetry
+            </p>
+          </div>
+          <span className="text-xs font-mono tabular-nums font-semibold text-slate-700">
+            {proactiveAlerts.length} bins flagged
+          </span>
+        </div>
+
+        {proactiveAlerts.length === 0 ? (
+          <p className="text-xs text-slate-500 py-4 text-center border border-dashed border-slate-200 rounded-lg">
+            All smart bins are forecasted to remain below capacity for more than 12 hours.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {proactiveAlerts.slice(0, 6).map((item) => {
+              const cat = getCategoryMeta(item.category);
+              const isImminent = item.risk_level === "imminent";
+              return (
+                <div
+                  key={item.bin_code}
+                  className="p-4 border border-slate-200 rounded-xl bg-slate-50/50 flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-mono font-semibold text-slate-900">
+                        {item.bin_code}
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          isImminent ? "text-rose-700" : "text-amber-700"
+                        }`}
+                      >
+                        {isImminent ? "■ Imminent" : "▲ Upcoming"}
+                      </span>
+                    </div>
+                    <div className="text-xs font-medium text-slate-900 truncate">
+                      {item.facility_name} · {item.ward}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-sm ${cat.swatchClass}`}
+                        aria-hidden="true"
+                      />
+                      <span>{cat.shortLabel}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-mono tabular-nums">
+                        {item.fill_level.toFixed(0)}% (+{item.fill_rate_pct_per_hr}%/hr)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2.5 border-t border-slate-200 flex items-center justify-between gap-2">
+                    <div className="text-xs">
+                      <div className="inline-flex items-center gap-1 font-mono tabular-nums font-bold text-slate-900">
+                        <Clock className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                        <span>100% in {formatDurationHours(item.hours_to_full)}</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-500">
+                        Est. {formatUtcTime(item.projected_full_at)}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={busyBin === item.bin_code || item.already_queued}
+                      onClick={() => handlePreDispatch(item)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap shrink-0 transition-colors ${
+                        item.already_queued
+                          ? "bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-default"
+                          : "bg-blue-700 hover:bg-blue-800 text-white"
+                      }`}
+                    >
+                      {item.already_queued ? "Queued" : "Pre-Dispatch"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* Filter & Search Toolbar */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
@@ -193,6 +334,7 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
                   <th className="py-3 px-3">Facility &amp; Ward</th>
                   <th className="py-3 px-3">Stream</th>
                   <th className="py-3 px-3">Fill Level</th>
+                  <th className="py-3 px-3">100% Forecast</th>
                   <th className="py-3 px-3 text-right">Mass</th>
                   <th className="py-3 px-3 text-right">VOC / Temp</th>
                   <th className="py-3 px-3">Status</th>
@@ -204,6 +346,7 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
                   const cat = getCategoryMeta(bin.category);
                   const st = getBinStatusDisplay(bin.status);
                   const isBusy = busyBin === bin.bin_code;
+                  const forecast = forecastMap.get(bin.bin_code);
 
                   return (
                     <tr key={bin.bin_code} className="hover:bg-slate-50/70">
@@ -245,6 +388,28 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
                             style={{ width: `${Math.min(100, bin.fill_level)}%` }}
                           />
                         </div>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap text-xs font-mono tabular-nums">
+                        {forecast ? (
+                          <div>
+                            <div
+                              className={`font-semibold ${
+                                forecast.risk_level === "imminent"
+                                  ? "text-rose-700"
+                                  : forecast.risk_level === "upcoming"
+                                  ? "text-amber-700"
+                                  : "text-slate-700"
+                              }`}
+                            >
+                              {formatDurationHours(forecast.hours_to_full)}
+                            </div>
+                            <div className="text-slate-500">
+                              +{forecast.fill_rate_pct_per_hr}%/hr
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">&mdash;</span>
+                        )}
                       </td>
                       <td className="py-3 px-3 text-right font-mono tabular-nums text-xs font-medium text-slate-900 whitespace-nowrap">
                         {bin.weight_kg.toFixed(2)} kg

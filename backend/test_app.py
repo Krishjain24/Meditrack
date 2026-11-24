@@ -65,6 +65,19 @@ class MediTrackPythonTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_dashboard_trends_and_predictive_alerts(self) -> None:
+        conn = meditrack_app.get_conn(self.db_path)
+        try:
+            payload = meditrack_app.build_dashboard_payload(conn)
+            self.assertEqual(len(payload["daily_trends"]), 7)
+            self.assertGreater(payload["daily_trends"][-1]["total_kg"], 0)
+            self.assertGreaterEqual(len(payload["predictive_alerts"]), 1)
+            first_forecast = payload["predictive_alerts"][0]
+            self.assertIn("hours_to_full", first_forecast)
+            self.assertIn(first_forecast["risk_level"], ("imminent", "upcoming", "stable"))
+        finally:
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()

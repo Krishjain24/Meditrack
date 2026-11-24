@@ -1,4 +1,15 @@
+import { useState } from "react";
 import { ArrowRight, CheckCircle2 } from "lucide-react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { ActiveTab, DashboardPayload } from "../types/meditrack";
 import { getCategoryMeta } from "../utils/wasteLogic";
 
@@ -46,6 +57,8 @@ const PIPELINE_STEPS: Array<{
 ];
 
 export function OverviewView({ data, onNavigate }: OverviewViewProps) {
+  const [trendMode, setTrendMode] = useState<"categories" | "total">("categories");
+
   const activeAlerts = data.alerts.filter(
     (a) => a.status === "pending" || a.status === "assigned"
   );
@@ -56,13 +69,6 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
       <section className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8">
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
           <div className="space-y-3 max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
-              <span></span>
-              <span aria-hidden="true">·</span>
-              <span></span>
-              <span aria-hidden="true">·</span>
-              <span></span>
-            </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
               Smart Medical Waste Segregation and Condition-Based Collection
             </h1>
@@ -72,7 +78,7 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
               GPS route optimization, and QR chain-of-custody reporting.
             </p>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
             <button
               type="button"
               onClick={() => onNavigate("segregation")}
@@ -135,7 +141,7 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
 
       {/* 5-Stage Methodology Pipeline */}
       <section aria-labelledby="pipeline-heading" className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
           <h2 id="pipeline-heading" className="text-base font-semibold text-slate-900">
             End-to-End Traceable Pipeline
           </h2>
@@ -159,6 +165,123 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
               <p className="mt-1 text-xs text-slate-600 leading-relaxed">{item.summary}</p>
             </button>
           ))}
+        </div>
+      </section>
+
+      {/* 7-Day Medical Waste Production Trends (Recharts) */}
+      <section
+        aria-labelledby="trends-heading"
+        className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 id="trends-heading" className="text-base font-semibold text-slate-900">
+              7-Day Medical Waste Production Trends
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Daily mass (kg) segregated across CPCB streams including today&apos;s live bin and disposal intake
+            </p>
+          </div>
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setTrendMode("categories")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                trendMode === "categories"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              By Category
+            </button>
+            <button
+              type="button"
+              onClick={() => setTrendMode("total")}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                trendMode === "total"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Total Mass
+            </button>
+          </div>
+        </div>
+
+        <div className="h-[280px] w-full" data-testid="waste-trends-chart">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={data.daily_trends ?? []}
+              margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis
+                dataKey="day_label"
+                tick={{ fontSize: 12, fill: "#475569" }}
+                stroke="#cbd5e1"
+              />
+              <YAxis
+                tick={{ fontSize: 12, fill: "#475569" }}
+                stroke="#cbd5e1"
+                unit=" kg"
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#ffffff",
+                  borderColor: "#e2e8f0",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: "12px" }} />
+              {trendMode === "total" ? (
+                <Line
+                  type="monotone"
+                  dataKey="total_kg"
+                  name="Total Daily Waste (kg)"
+                  stroke="#1d4ed8"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: "#1d4ed8" }}
+                  activeDot={{ r: 6 }}
+                />
+              ) : (
+                <>
+                  <Line
+                    type="monotone"
+                    dataKey="yellow_kg"
+                    name="Yellow (Infectious)"
+                    stroke="#d97706"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="red_kg"
+                    name="Red (Plastics)"
+                    stroke="#dc2626"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="blue_kg"
+                    name="Blue (Glassware)"
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="white_kg"
+                    name="White (Sharps)"
+                    stroke="#475569"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </>
+              )}
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </section>
 

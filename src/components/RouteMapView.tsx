@@ -240,7 +240,7 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
                     />
                     <text
                       x={pt.x}
-                      y={pt.y - 16}
+                      y={pt.y - 24}
                       textAnchor="middle"
                       fontSize="11"
                       fontWeight="600"
@@ -251,7 +251,7 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
                     {alertCount > 0 && (
                       <text
                         x={pt.x}
-                        y={pt.y + 24}
+                        y={pt.y + 30}
                         textAnchor="middle"
                         fontSize="10"
                         fontWeight="600"
@@ -318,22 +318,27 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
                 );
               })}
 
-              {/* Numbered Stop Markers */}
-              {displayedStops.map((stop) => {
+              {/* Numbered Stop Markers (staggered when multiple bins share a facility) */}
+              {displayedStops.map((stop, idx) => {
                 const pt = projectLatLngToSvg(stop.lat, stop.lng, mapW, mapH);
+                const sameFacilityBefore = displayedStops
+                  .slice(0, idx)
+                  .filter((prev) => prev.facility_name === stop.facility_name).length;
+                const badgeX = pt.x + 16 + sameFacilityBefore * 20;
+                const badgeY = pt.y - 8;
                 return (
                   <g key={stop.bin_code}>
                     <circle
-                      cx={pt.x + 14}
-                      cy={pt.y - 12}
+                      cx={badgeX}
+                      cy={badgeY}
                       r={9}
                       fill="#1d4ed8"
                       stroke="#ffffff"
                       strokeWidth="1.5"
                     />
                     <text
-                      x={pt.x + 14}
-                      y={pt.y - 8.5}
+                      x={badgeX}
+                      y={badgeY + 3.5}
                       textAnchor="middle"
                       fontSize="9"
                       fontWeight="700"

@@ -133,7 +133,7 @@ export default function App() {
       <footer className="border-t border-slate-200 bg-white py-5">
         <div className="max-w-[1360px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
           <span>
-            MediTrack Smart Medical Waste Segregation &amp; Collection System · SIH 2026 PS-26115 · Team Vital-X
+          meditrack
           </span>
           <div className="flex items-center gap-4">
             <button

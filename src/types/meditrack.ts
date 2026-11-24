@@ -129,6 +129,31 @@ export interface FacilityNode {
   zone: string;
 }
 
+export interface PredictiveAlert {
+  bin_code: string;
+  facility_name: string;
+  ward: string;
+  category: WasteCategoryKey;
+  fill_level: number;
+  fill_rate_pct_per_hr: number;
+  hours_to_full: number;
+  hours_to_threshold: number;
+  projected_full_at: string;
+  risk_level: "imminent" | "upcoming" | "stable";
+  recommended_action: string;
+  already_queued: boolean;
+}
+
+export interface DailyWasteTrend {
+  date: string;
+  day_label: string;
+  yellow_kg: number;
+  red_kg: number;
+  white_kg: number;
+  blue_kg: number;
+  total_kg: number;
+}
+
 export interface DashboardPayload {
   kpis: {
     total_bins: number;
@@ -152,6 +177,8 @@ export interface DashboardPayload {
   disposal_ledger: DisposalManifest[];
   category_breakdown: CategoryBreakdown[];
   benchmarks: BenchmarkMetric[];
+  predictive_alerts: PredictiveAlert[];
+  daily_trends: DailyWasteTrend[];
 }
 
 export interface ClassificationResult {
