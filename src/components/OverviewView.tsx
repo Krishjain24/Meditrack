@@ -57,11 +57,11 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
         <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-6">
           <div className="space-y-3 max-w-3xl">
             <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
-              <span>SIH 2026 Problem Statement 26115</span>
+              <span></span>
               <span aria-hidden="true">·</span>
-              <span>Team Vital-X</span>
+              <span></span>
               <span aria-hidden="true">·</span>
-              <span>Python SQLite Telemetry Core</span>
+              <span></span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 [text-wrap:balance]">
               Smart Medical Waste Segregation and Condition-Based Collection
