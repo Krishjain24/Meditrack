@@ -1,0 +1,6 @@
+{
+  "name": "MediTrack — Smart Medical Waste Collection & Segregation",
+  "description": "Smart biomedical waste classification, ESP32 IoT fill-level monitoring, condition-based GPS route optimization, and QR chain-of-custody disposal reporting powered by Python.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
