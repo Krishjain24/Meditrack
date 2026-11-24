@@ -1,21 +1,957 @@
-import { useState } from "react";
-import { CheckCircle2, Navigation, Truck } from "lucide-react";
+/// <reference types="google.maps" />
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  APIProvider,
+  AdvancedMarker,
+  InfoWindow,
+  Map,
+  Pin,
+  useMap,
+  useMapsLibrary,
+} from "@vis.gl/react-google-maps";
+import {
+  CheckCircle2,
+  ExternalLink,
+  Loader2,
+  MapPin,
+  Navigation,
+  Plus,
+  Route as RouteIcon,
+  Search,
+  Star,
+  Trash2,
+  Truck,
+} from "lucide-react";
 import { completeBinCollection, optimizeRoutes } from "../api/client";
-import type { DashboardPayload, RoutePlan } from "../types/meditrack";
-import { getCategoryMeta, projectLatLngToSvg } from "../utils/wasteLogic";
+import type { DashboardPayload, RoutePlan, Vehicle } from "../types/meditrack";
+import {
+  extractBhopalLocality,
+  getCategoryMeta,
+  isMapsQuotaError,
+} from "../utils/wasteLogic";
 
 interface RouteMapViewProps {
   data: DashboardPayload;
+  mapsApiKey: string;
   onDataUpdated: (dashboard: DashboardPayload) => void;
 }
 
-export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
+interface BhopalHospitalPlace {
+  id: string;
+  name: string;
+  locality: string;
+  address: string;
+  lat: number;
+  lng: number;
+  rating?: number | null;
+  userRatingCount?: number | null;
+  businessStatus?: string | null;
+  primaryType?: string | null;
+  googleMapsURI?: string | null;
+}
+
+interface ComputedRoadRoute {
+  distanceKm: number;
+  durationMin: number;
+  orderedStopIds: string[];
+  steps: Array<{
+    instruction: string;
+    distanceText: string;
+  }>;
+}
+
+const BHOPAL_CENTER = { lat: 23.2599, lng: 77.4126 };
+const MAPS_LIBRARIES: Array<"maps" | "places" | "marker" | "routes" | "core"> = [
+  "maps",
+  "places",
+  "marker",
+  "routes",
+  "core",
+];
+
+function formatPlaceRecord(place: google.maps.places.Place): BhopalHospitalPlace | null {
+  if (!place.id || !place.location) return null;
+  const lat =
+    typeof place.location.lat === "function"
+      ? place.location.lat()
+      : (place.location as unknown as { lat: number }).lat;
+  const lng =
+    typeof place.location.lng === "function"
+      ? place.location.lng()
+      : (place.location as unknown as { lng: number }).lng;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const address = place.formattedAddress || "Bhopal, Madhya Pradesh, India";
+  const locality = extractBhopalLocality(place.addressComponents, address);
+  const primaryType =
+    typeof place.primaryTypeDisplayName === "string"
+      ? place.primaryTypeDisplayName
+      : null;
+
+  return {
+    id: place.id,
+    name: place.displayName || "Bhopal Healthcare Facility",
+    locality,
+    address,
+    lat,
+    lng,
+    rating: place.rating ?? null,
+    userRatingCount: place.userRatingCount ?? null,
+    businessStatus: place.businessStatus ? String(place.businessStatus) : null,
+    primaryType,
+    googleMapsURI: place.googleMapsURI ?? null,
+  };
+}
+
+type ActiveMapMarker =
+  | { kind: "hospital"; hospital: BhopalHospitalPlace }
+  | { kind: "plant" }
+  | { kind: "vehicle"; vehicle: Vehicle }
+  | null;
+
+interface BhopalLiveMapInnerProps {
+  hospitals: BhopalHospitalPlace[];
+  treatmentPlant: DashboardPayload["treatment_plant"];
+  vehicles: Vehicle[];
+  selectedLocality: string;
+  onSelectLocality: (loc: string) => void;
+  onHospitalsMerged: (incoming: BhopalHospitalPlace[]) => void;
+  routeStopIds: string[];
+  onToggleRouteStop: (id: string) => void;
+  onClearRouteStops: () => void;
+  onSetRouteStops: (ids: string[]) => void;
+}
+
+function BhopalLiveMapInner({
+  hospitals,
+  treatmentPlant,
+  vehicles,
+  selectedLocality,
+  onSelectLocality,
+  onHospitalsMerged,
+  routeStopIds,
+  onToggleRouteStop,
+  onClearRouteStops,
+  onSetRouteStops,
+}: BhopalLiveMapInnerProps) {
+  const map = useMap();
+  const placesLib = useMapsLibrary("places");
+  const routesLib = useMapsLibrary("routes");
+
+  const [loadingPlaces, setLoadingPlaces] = useState(false);
+  const [placesError, setPlacesError] = useState("");
+  const [activeMarker, setActiveMarker] = useState<ActiveMapMarker>(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [suggestions, setSuggestions] = useState<google.maps.places.AutocompleteSuggestion[]>([]);
+  const [searchingQuery, setSearchingQuery] = useState(false);
+
+  const [computingRoute, setComputingRoute] = useState(false);
+  const [roadRoute, setRoadRoute] = useState<ComputedRoadRoute | null>(null);
+  const [routeError, setRouteError] = useState("");
+
+  const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+  const initialLoadedRef = useRef(false);
+
+  const clearMapPolylines = useCallback(() => {
+    for (const line of polylinesRef.current) {
+      line.setMap(null);
+    }
+    polylinesRef.current = [];
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearMapPolylines();
+    };
+  }, [clearMapPolylines]);
+
+  const fetchBhopalHospitalsByText = useCallback(
+    async (textQuery: string) => {
+      if (!placesLib) return;
+      setLoadingPlaces(true);
+      setPlacesError("");
+      try {
+        const res = await placesLib.Place.searchByText({
+          textQuery,
+          fields: [
+            "id",
+            "displayName",
+            "formattedAddress",
+            "location",
+            "addressComponents",
+            "rating",
+            "userRatingCount",
+            "businessStatus",
+            "primaryTypeDisplayName",
+            "googleMapsURI",
+          ],
+          language: "en-IN",
+          region: "in",
+          locationBias: {
+            center: BHOPAL_CENTER,
+            radius: 18000,
+          },
+          maxResultCount: 20,
+        });
+
+        const parsed: BhopalHospitalPlace[] = [];
+        for (const p of res.places ?? []) {
+          const item = formatPlaceRecord(p);
+          if (item && item.address.toLowerCase().includes("bhopal")) {
+            parsed.push(item);
+          } else if (item) {
+            parsed.push(item);
+          }
+        }
+        if (parsed.length > 0) {
+          onHospitalsMerged(parsed);
+        }
+      } catch (err) {
+        if (isMapsQuotaError(err)) {
+          window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+        }
+        setPlacesError(
+          err instanceof Error ? err.message : "Unable to load Bhopal hospitals from Google Places."
+        );
+      } finally {
+        setLoadingPlaces(false);
+      }
+    },
+    [onHospitalsMerged, placesLib]
+  );
+
+  // Initial Bhopal hospital & locality discovery via Places API (New)
+  useEffect(() => {
+    if (!placesLib || initialLoadedRef.current) return;
+    initialLoadedRef.current = true;
+    void (async () => {
+      await fetchBhopalHospitalsByText("hospital in Bhopal, Madhya Pradesh, India");
+      await fetchBhopalHospitalsByText("medical college hospital in Bhopal, Madhya Pradesh, India");
+    })();
+  }, [fetchBhopalHospitalsByText, placesLib]);
+
+  // Autocomplete predictions scoped to Bhopal
+  useEffect(() => {
+    if (!placesLib) return;
+    const q = searchInput.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        if (!sessionTokenRef.current) {
+          sessionTokenRef.current = new placesLib.AutocompleteSessionToken();
+        }
+        const res = await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+          input: q,
+          sessionToken: sessionTokenRef.current,
+          includedRegionCodes: ["in"],
+          locationBias: {
+            center: BHOPAL_CENTER,
+            radius: 20000,
+          },
+          language: "en-IN",
+        });
+        if (!cancelled) {
+          setSuggestions(res.suggestions ?? []);
+        }
+      } catch (err) {
+        if (isMapsQuotaError(err)) {
+          window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+        }
+        if (!cancelled) {
+          setSuggestions([]);
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [placesLib, searchInput]);
+
+  const handlePickSuggestion = useCallback(
+    async (suggestion: google.maps.places.AutocompleteSuggestion) => {
+      if (!placesLib || !suggestion.placePrediction) return;
+      setSearchingQuery(true);
+      try {
+        const place = suggestion.placePrediction.toPlace();
+        await place.fetchFields({
+          fields: [
+            "id",
+            "displayName",
+            "formattedAddress",
+            "location",
+            "addressComponents",
+            "rating",
+            "userRatingCount",
+            "businessStatus",
+            "primaryTypeDisplayName",
+            "googleMapsURI",
+          ],
+        });
+        sessionTokenRef.current = null;
+        setSuggestions([]);
+        const formatted = formatPlaceRecord(place);
+        if (formatted) {
+          onHospitalsMerged([formatted]);
+          setActiveMarker({ kind: "hospital", hospital: formatted });
+          onSelectLocality("ALL");
+          setSearchInput("");
+          if (map) {
+            map.panTo({ lat: formatted.lat, lng: formatted.lng });
+            map.setZoom(14);
+          }
+        }
+      } catch (err) {
+        if (isMapsQuotaError(err)) {
+          window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+        }
+      } finally {
+        setSearchingQuery(false);
+      }
+    },
+    [map, onHospitalsMerged, onSelectLocality, placesLib]
+  );
+
+  const handleLocalitySearchSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchInput.trim();
+    if (!q || !placesLib) return;
+    setSuggestions([]);
+    setSearchingQuery(true);
+    await fetchBhopalHospitalsByText(`hospital in ${q}, Bhopal, Madhya Pradesh, India`);
+    setSearchingQuery(false);
+  };
+
+  // Compute live driving route in Bhopal via Routes API (Route.computeRoutes)
+  const computeBhopalRoadRoute = useCallback(
+    async (targetIds: string[]) => {
+      if (!routesLib || !map) return;
+      const hospitalById: Record<string, BhopalHospitalPlace> = {};
+      for (const h of hospitals) {
+        hospitalById[h.id] = h;
+      }
+      const stops = targetIds
+        .map((id) => hospitalById[id])
+        .filter((h): h is BhopalHospitalPlace => Boolean(h));
+
+      if (stops.length < 2) {
+        setRouteError("Select at least 2 Bhopal hospitals to compute a driving route.");
+        return;
+      }
+
+      setComputingRoute(true);
+      setRouteError("");
+      clearMapPolylines();
+
+      try {
+        const originStop = stops[0];
+        const destStop = stops[stops.length - 1];
+        const midStops = stops.slice(1, -1);
+
+        const request: google.maps.routes.ComputeRoutesRequest = {
+          origin: { lat: originStop.lat, lng: originStop.lng },
+          destination: { lat: destStop.lat, lng: destStop.lng },
+          intermediates:
+            midStops.length > 0
+              ? midStops.map((s) => ({ location: { lat: s.lat, lng: s.lng } }))
+              : undefined,
+          optimizeWaypointOrder: midStops.length > 1,
+          travelMode: routesLib.TravelMode.DRIVING,
+          fields: [
+            "durationMillis",
+            "distanceMeters",
+            "path",
+            "viewport",
+            "legs",
+            "optimizedIntermediateWaypointIndices",
+          ],
+          language: "en-IN",
+          region: "in",
+        };
+
+        const response = await routesLib.Route.computeRoutes(request);
+        const primaryRoute = response.routes?.[0];
+        if (!primaryRoute) {
+          setRouteError("No drivable Bhopal road route returned for the selected hospitals.");
+          return;
+        }
+
+        const createdLines = primaryRoute.createPolylines({
+          polylineOptions: {
+            strokeColor: "#1d4ed8",
+            strokeOpacity: 0.9,
+            strokeWeight: 5,
+          },
+        });
+        for (const line of createdLines) {
+          line.setMap(map);
+        }
+        polylinesRef.current = createdLines;
+
+        if (primaryRoute.viewport) {
+          map.fitBounds(primaryRoute.viewport);
+        }
+
+        const orderedIntermediates =
+          primaryRoute.optimizedIntermediateWaypointIndices &&
+          primaryRoute.optimizedIntermediateWaypointIndices.length === midStops.length
+            ? primaryRoute.optimizedIntermediateWaypointIndices.map((idx) => midStops[idx].id)
+            : midStops.map((s) => s.id);
+
+        const orderedStopIds = [originStop.id, ...orderedIntermediates, destStop.id];
+
+        const steps: Array<{ instruction: string; distanceText: string }> = [];
+        for (const leg of primaryRoute.legs ?? []) {
+          for (const step of leg.steps ?? []) {
+            if (step.instructions) {
+              const meters = step.distanceMeters ?? 0;
+              steps.push({
+                instruction: step.instructions,
+                distanceText:
+                  meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`,
+              });
+            }
+          }
+        }
+
+        const distKm = Math.round(((primaryRoute.distanceMeters ?? 0) / 1000) * 10) / 10;
+        const durMin = Math.max(1, Math.round((primaryRoute.durationMillis ?? 0) / 60000));
+
+        setRoadRoute({
+          distanceKm: distKm,
+          durationMin: durMin,
+          orderedStopIds,
+          steps: steps.slice(0, 8),
+        });
+      } catch (err) {
+        if (isMapsQuotaError(err)) {
+          window.dispatchEvent(new CustomEvent("gmp-quota-exceeded"));
+        }
+        setRouteError(
+          err instanceof Error ? err.message : "Failed to compute Bhopal collection route."
+        );
+      } finally {
+        setComputingRoute(false);
+      }
+    },
+    [clearMapPolylines, hospitals, map, routesLib]
+  );
+
+  // Build locality filter summary from live Places results
+  const localityCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const h of hospitals) {
+      counts[h.locality] = (counts[h.locality] ?? 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [hospitals]);
+
+  const filteredHospitals = useMemo(() => {
+    const q = searchInput.trim().toLowerCase();
+    return hospitals.filter((h) => {
+      const matchesLoc = selectedLocality === "ALL" || h.locality === selectedLocality;
+      const matchesSearch =
+        !q ||
+        h.name.toLowerCase().includes(q) ||
+        h.locality.toLowerCase().includes(q) ||
+        h.address.toLowerCase().includes(q);
+      return matchesLoc && matchesSearch;
+    });
+  }, [hospitals, searchInput, selectedLocality]);
+
+  const activeHospital =
+    activeMarker?.kind === "hospital" ? activeMarker.hospital : null;
+  const activeVehicle =
+    activeMarker?.kind === "vehicle" ? activeMarker.vehicle : null;
+
+  const handleAutoRouteBhopal = () => {
+    const candidates = (filteredHospitals.length >= 2 ? filteredHospitals : hospitals)
+      .slice(0, 4)
+      .map((h) => h.id);
+    if (candidates.length >= 2) {
+      onSetRouteStops(candidates);
+      void computeBhopalRoadRoute(candidates);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Search Bhopal Hospitals & Localities Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <form onSubmit={handleLocalitySearchSubmit} className="relative flex-1 flex gap-2">
+          <div className="relative flex-1">
+            <label htmlFor="bhopal-places-search" className="sr-only">
+              Search Bhopal hospital or locality
+            </label>
+            <Search
+              className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
+              aria-hidden="true"
+            />
+            <input
+              id="bhopal-places-search"
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search hospital or Bhopal locality (Arera Colony, MP Nagar, Kolar Road)..."
+              className="w-full pl-9 pr-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            />
+
+            {suggestions.length > 0 && (
+              <ul className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-30 max-h-60 overflow-y-auto divide-y divide-slate-100">
+                {suggestions.map((s, idx) => (
+                  <li key={s.placePrediction?.placeId ?? idx}>
+                    <button
+                      type="button"
+                      onClick={() => handlePickSuggestion(s)}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors"
+                    >
+                      <span className="font-semibold text-slate-900 block">
+                        {s.placePrediction?.mainText?.text || s.placePrediction?.text.text}
+                      </span>
+                      {s.placePrediction?.secondaryText?.text && (
+                        <span className="text-slate-500">
+                          {s.placePrediction.secondaryText.text}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={searchingQuery || !searchInput.trim()}
+            className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+          >
+            {searchingQuery ? "Searching..." : "Search Bhopal"}
+          </button>
+        </form>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              if (routeStopIds.length >= 2) {
+                void computeBhopalRoadRoute(routeStopIds);
+              } else {
+                handleAutoRouteBhopal();
+              }
+            }}
+            disabled={computingRoute || hospitals.length < 2}
+            data-testid="compute-bhopal-route-btn"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50"
+          >
+            <RouteIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>
+              {computingRoute
+                ? "Computing Road Route..."
+                : routeStopIds.length >= 2
+                ? `Route ${routeStopIds.length} Stops`
+                : "Compute Bhopal Route"}
+            </span>
+          </button>
+
+          {routeStopIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                onClearRouteStops();
+                clearMapPolylines();
+                setRoadRoute(null);
+              }}
+              className="px-2.5 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 rounded-lg"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Discovered Bhopal Localities Filter Strip */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1" data-testid="bhopal-localities-bar">
+        <span className="text-xs font-medium text-slate-500 whitespace-nowrap shrink-0">
+          Bhopal Localities ({localityCounts.length}):
+        </span>
+        <button
+          type="button"
+          onClick={() => onSelectLocality("ALL")}
+          className={`px-2.5 py-1 text-xs font-medium rounded-md border whitespace-nowrap shrink-0 transition-colors ${
+            selectedLocality === "ALL"
+              ? "bg-blue-700 text-white border-blue-700"
+              : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+          }`}
+        >
+          All ({hospitals.length})
+        </button>
+        {localityCounts.map(([locality, count]) => (
+          <button
+            key={locality}
+            type="button"
+            onClick={() => onSelectLocality(locality)}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md border whitespace-nowrap shrink-0 transition-colors ${
+              selectedLocality === locality
+                ? "bg-blue-700 text-white border-blue-700"
+                : "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
+            }`}
+          >
+            {locality} ({count})
+          </button>
+        ))}
+      </div>
+
+      {placesError && (
+        <div
+          role="alert"
+          className="p-3 text-xs text-rose-800 bg-rose-50 border border-rose-200 rounded-lg"
+        >
+          {placesError}
+        </div>
+      )}
+
+      {routeError && (
+        <div
+          role="alert"
+          className="p-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg"
+        >
+          {routeError}
+        </div>
+      )}
+
+      {/* Live Google Map of Bhopal */}
+      <div className="relative w-full h-[480px] rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+        {loadingPlaces && hospitals.length === 0 && (
+          <div className="absolute top-3 left-3 z-20 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-200 shadow-sm text-xs font-medium text-slate-700">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-700" aria-hidden="true" />
+            <span>Loading Bhopal hospitals &amp; localities...</span>
+          </div>
+        )}
+
+        <Map
+          defaultCenter={BHOPAL_CENTER}
+          defaultZoom={12}
+          mapId="DEMO_MAP_ID"
+          gestureHandling="greedy"
+          internalUsageAttributionIds={["gmp_mcp_codeassist_v1_aistudio"]}
+          onClick={() => setActiveMarker(null)}
+          className="w-full h-full"
+        >
+          {/* Authorized Bhopal CBWTF Treatment Plant */}
+          <AdvancedMarker
+            position={{ lat: treatmentPlant.lat, lng: treatmentPlant.lng }}
+            title={treatmentPlant.name}
+            onClick={() => setActiveMarker({ kind: "plant" })}
+          >
+            <Pin
+              background="#047857"
+              borderColor="#064e3b"
+              glyphColor="#ffffff"
+              glyphText="C"
+            />
+          </AdvancedMarker>
+
+          {/* Active Mobile Biomedical Waste Collection Vans */}
+          {vehicles.map((v, idx) => (
+            <AdvancedMarker
+              key={v.vehicle_code}
+              position={{ lat: v.lat, lng: v.lng }}
+              title={`${v.vehicle_code} (${v.driver_name})`}
+              onClick={() => setActiveMarker({ kind: "vehicle", vehicle: v })}
+            >
+              <Pin
+                background="#4338ca"
+                borderColor="#312e81"
+                glyphColor="#ffffff"
+                glyphText={`V${idx + 1}`}
+              />
+            </AdvancedMarker>
+          ))}
+
+          {filteredHospitals.map((hospital) => {
+            const stopIdx = routeStopIds.indexOf(hospital.id);
+            const isQueued = stopIdx !== -1;
+            return (
+              <AdvancedMarker
+                key={hospital.id}
+                position={{ lat: hospital.lat, lng: hospital.lng }}
+                title={`${hospital.name} (${hospital.locality})`}
+                onClick={() => setActiveMarker({ kind: "hospital", hospital })}
+              >
+                <Pin
+                  background={isQueued ? "#1d4ed8" : "#dc2626"}
+                  borderColor={isQueued ? "#1e3a8a" : "#991b1b"}
+                  glyphColor="#ffffff"
+                  glyphText={isQueued ? String(stopIdx + 1) : "H"}
+                />
+              </AdvancedMarker>
+            );
+          })}
+
+          {activeMarker?.kind === "plant" && (
+            <InfoWindow
+              position={{ lat: treatmentPlant.lat, lng: treatmentPlant.lng }}
+              onCloseClick={() => setActiveMarker(null)}
+            >
+              <div className="max-w-[230px] space-y-1 p-1 text-slate-900">
+                <p className="text-xs font-bold leading-snug">{treatmentPlant.name}</p>
+                <p className="text-[11px] font-medium text-emerald-700">
+                  Authorized MPPCB CBWTF Plant · Govindpura, Bhopal
+                </p>
+                <p className="text-[11px] text-slate-600">
+                  Terminal incineration, autoclaving &amp; QR chain-of-custody disposal destination.
+                </p>
+              </div>
+            </InfoWindow>
+          )}
+
+          {activeVehicle && (
+            <InfoWindow
+              position={{ lat: activeVehicle.lat, lng: activeVehicle.lng }}
+              onCloseClick={() => setActiveMarker(null)}
+            >
+              <div className="max-w-[220px] space-y-1 p-1 text-slate-900">
+                <p className="text-xs font-bold">
+                  {activeVehicle.vehicle_code} · {activeVehicle.driver_name}
+                </p>
+                <p className="text-[11px] font-medium text-indigo-700">
+                  Status: {activeVehicle.status}
+                </p>
+                <p className="text-[11px] font-mono text-slate-600">
+                  Load: {activeVehicle.current_load_kg.toFixed(1)} / {activeVehicle.capacity_kg} kg
+                </p>
+              </div>
+            </InfoWindow>
+          )}
+
+          {activeHospital && (
+            <InfoWindow
+              position={{ lat: activeHospital.lat, lng: activeHospital.lng }}
+              onCloseClick={() => setActiveMarker(null)}
+            >
+              <div className="max-w-[240px] space-y-1.5 p-1 text-slate-900">
+                <p className="text-xs font-bold leading-snug">{activeHospital.name}</p>
+                <p className="text-[11px] font-medium text-blue-700">
+                  {activeHospital.locality}, Bhopal
+                </p>
+                <p className="text-[11px] text-slate-600 leading-snug">
+                  {activeHospital.address}
+                </p>
+                {activeHospital.rating != null && (
+                  <p className="text-[11px] font-medium text-amber-700 flex items-center gap-1">
+                    <Star className="w-3 h-3 fill-amber-500 text-amber-500" aria-hidden="true" />
+                    <span>
+                      {activeHospital.rating.toFixed(1)} ({activeHospital.userRatingCount ?? 0} reviews)
+                    </span>
+                  </p>
+                )}
+                <div className="pt-1 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onToggleRouteStop(activeHospital.id)}
+                    className="px-2.5 py-1 text-[11px] font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded"
+                  >
+                    {routeStopIds.includes(activeHospital.id)
+                      ? "Remove from Route"
+                      : "Add to Bhopal Route"}
+                  </button>
+                  {activeHospital.googleMapsURI && (
+                    <a
+                      href={activeHospital.googleMapsURI}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-medium text-blue-700 hover:underline inline-flex items-center gap-0.5"
+                    >
+                      <span>Maps</span>
+                      <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            </InfoWindow>
+          )}
+        </Map>
+      </div>
+
+      {/* Live Map Marker Legend */}
+      <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-600 px-1">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-red-600" aria-hidden="true" />
+          <span>H: Bhopal Hospital</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-blue-700" aria-hidden="true" />
+          <span>1..N: Queued Route Stop</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-indigo-700" aria-hidden="true" />
+          <span>V1–V3: Collection Van</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-700" aria-hidden="true" />
+          <span>C: {treatmentPlant.name}</span>
+        </span>
+      </div>
+
+      {/* Road Route Summary + Turn-by-Turn Navigation (from PPT Fleet Route Optimization App) */}
+      {roadRoute && (
+        <div
+          className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl space-y-3"
+          data-testid="bhopal-road-route-summary"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-blue-800">
+                Live Bhopal Road Route (Routes API)
+              </p>
+              <p className="text-sm font-bold text-slate-900 mt-0.5">
+                {roadRoute.distanceKm} km · Est. {roadRoute.durationMin} min driving across{" "}
+                {roadRoute.orderedStopIds.length} Bhopal hospitals
+              </p>
+            </div>
+          </div>
+
+          {roadRoute.steps.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-blue-200/80">
+              {roadRoute.steps.map((st, idx) => (
+                <div
+                  key={`${idx}-${st.distanceText}`}
+                  className="text-xs bg-white/90 border border-blue-100 rounded-lg px-3 py-2 flex items-start justify-between gap-2"
+                >
+                  <span className="text-slate-800">
+                    <strong className="text-blue-700 mr-1">{idx + 1}.</strong>
+                    {st.instruction}
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-500 whitespace-nowrap shrink-0">
+                    {st.distanceText}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Live Bhopal Hospitals & Localities Directory */}
+      <div className="border border-slate-200 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+            Bhopal Hospitals &amp; Localities Directory ({filteredHospitals.length})
+          </h3>
+          <span className="text-[11px] text-slate-500">Powered by Google Places API (New)</span>
+        </div>
+        {filteredHospitals.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            {loadingPlaces
+              ? "Discovering Bhopal hospitals..."
+              : "No hospitals match the selected Bhopal locality filter."}
+          </div>
+        ) : (
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+            {filteredHospitals.map((h) => {
+              const stopIdx = routeStopIds.indexOf(h.id);
+              const isQueued = stopIdx !== -1;
+              return (
+                <div
+                  key={h.id}
+                  className="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveMarker({ kind: "hospital", hospital: h });
+                      if (map) {
+                        map.panTo({ lat: h.lat, lng: h.lng });
+                        map.setZoom(14);
+                      }
+                    }}
+                    className="min-w-0 text-left flex-1"
+                  >
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" aria-hidden="true" />
+                      <span className="text-xs font-semibold text-slate-900 truncate">
+                        {h.name}
+                      </span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-700 rounded shrink-0">
+                        {h.locality}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 truncate pl-5">{h.address}</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onToggleRouteStop(h.id)}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-md inline-flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors ${
+                      isQueued
+                        ? "bg-blue-700 text-white hover:bg-blue-800"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    {isQueued ? (
+                      <>
+                        <Trash2 className="w-3 h-3" aria-hidden="true" />
+                        <span>Stop #{stopIdx + 1}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3 h-3" aria-hidden="true" />
+                        <span>Queue</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function RouteMapView({ data, mapsApiKey, onDataUpdated }: RouteMapViewProps) {
   const [selectedVehicle, setSelectedVehicle] = useState<string>("");
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const [collectingBin, setCollectingBin] = useState<string | null>(null);
   const [lastMintMsg, setLastMintMsg] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
+
+  const [bhopalHospitals, setBhopalHospitals] = useState<BhopalHospitalPlace[]>([]);
+  const [selectedLocality, setSelectedLocality] = useState<string>("ALL");
+  const [routeStopIds, setRouteStopIds] = useState<string[]>([]);
+
+  const handleHospitalsMerged = useCallback((incoming: BhopalHospitalPlace[]) => {
+    setBhopalHospitals((prev) => {
+      const seen: Record<string, BhopalHospitalPlace> = {};
+      const next: BhopalHospitalPlace[] = [];
+      for (const h of prev) {
+        seen[h.id] = h;
+        next.push(h);
+      }
+      for (const h of incoming) {
+        if (!seen[h.id]) {
+          seen[h.id] = h;
+          next.push(h);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleRouteStop = useCallback((id: string) => {
+    setRouteStopIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }, []);
 
   const activeVehicleObj = data.vehicles.find(
     (v) => v.assigned_route && v.assigned_route.length > 0
@@ -26,9 +962,6 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
       : activeVehicleObj?.assigned_route ?? [];
   const displayedVehicleCode =
     routePlan?.vehicle_code || activeVehicleObj?.vehicle_code || null;
-  const displayedVehicle = data.vehicles.find(
-    (v) => v.vehicle_code === displayedVehicleCode
-  );
 
   async function handleOptimize() {
     setOptimizing(true);
@@ -72,42 +1005,16 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
     }
   }
 
-  const mapW = 760;
-  const mapH = 420;
-  const plantPt = projectLatLngToSvg(
-    data.treatment_plant.lat,
-    data.treatment_plant.lng,
-    mapW,
-    mapH
-  );
-
-  // Build route polyline points
-  const polylinePoints: string[] = [];
-  if (displayedVehicle && displayedStops.length > 0) {
-    const startPt = projectLatLngToSvg(
-      displayedVehicle.lat,
-      displayedVehicle.lng,
-      mapW,
-      mapH
-    );
-    polylinePoints.push(`${startPt.x},${startPt.y}`);
-    for (const stop of displayedStops) {
-      const p = projectLatLngToSvg(stop.lat, stop.lng, mapW, mapH);
-      polylinePoints.push(`${p.x},${p.y}`);
-    }
-    polylinePoints.push(`${plantPt.x},${plantPt.y}`);
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            GPS Collection &amp; Route Optimization Engine
+            Bhopal Real-Time Fleet Map &amp; Route Optimization
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Assigns the nearest mobile collection unit and orders stops by fill-level severity,
-            eliminating wasted fixed-schedule fleet trips.
+            Live Google Maps view of Bhopal hospitals and localities paired with MediTrack&apos;s
+            condition-based collection dispatch queue.
           </p>
         </div>
 
@@ -136,7 +1043,7 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
           >
             <Navigation className="w-4 h-4" aria-hidden="true" />
-            <span>{optimizing ? "Optimizing..." : "Optimize Collection Route"}</span>
+            <span>{optimizing ? "Optimizing..." : "Optimize Dispatch Queue"}</span>
           </button>
         </div>
       </div>
@@ -158,225 +1065,67 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Interactive Spatial SVG Corridor Map */}
+        {/* Left: Live Google Maps Bhopal Hospital & Locality Dispatch Map */}
         <section className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900">
-              Medical Corridor Spatial Dispatch Map
-            </h2>
-            <span className="text-xs font-mono text-slate-500">
-              {displayedStops.length} active stops queued
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold text-slate-900">
+                Bhopal Hospitals &amp; Localities Live Map
+              </h2>
+              <p className="text-xs text-slate-500">
+                Bhopal, Madhya Pradesh · Filter by locality, inspect hospital pins, and compute road routes
+              </p>
+            </div>
+            <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+              {bhopalHospitals.length} Bhopal hospitals
             </span>
           </div>
 
-          <div className="border border-slate-200 rounded-lg bg-slate-50 overflow-hidden">
-            <svg
-              viewBox={`0 0 ${mapW} ${mapH}`}
-              className="w-full h-auto block"
-              role="img"
-              aria-label="Medical waste collection GPS corridor map"
-              data-testid="gps-route-map"
+          {!mapsApiKey ? (
+            <div
+              className="h-[480px] rounded-xl border border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center p-6 text-center"
+              data-testid="maps-key-missing"
             >
-              {/* Subtle coordinate grid */}
-              {[1, 2, 3, 4, 5].map((i) => (
-                <line
-                  key={`gx-${i}`}
-                  x1={(mapW / 6) * i}
-                  y1={0}
-                  x2={(mapW / 6) * i}
-                  y2={mapH}
-                  stroke="#e2e8f0"
-                  strokeWidth="1"
-                />
-              ))}
-              {[1, 2, 3].map((i) => (
-                <line
-                  key={`gy-${i}`}
-                  x1={0}
-                  y1={(mapH / 4) * i}
-                  x2={mapW}
-                  y2={(mapH / 4) * i}
-                  stroke="#e2e8f0"
-                  strokeWidth="1"
-                />
-              ))}
-
-              {/* Optimized Route Polyline */}
-              {polylinePoints.length >= 2 && (
-                <polyline
-                  points={polylinePoints.join(" ")}
-                  fill="none"
-                  stroke="#1d4ed8"
-                  strokeWidth="3"
-                  strokeDasharray="6 4"
-                />
-              )}
-
-              {/* Facility Nodes */}
-              {data.facilities.map((fac) => {
-                const pt = projectLatLngToSvg(fac.lat, fac.lng, mapW, mapH);
-                const facBins = data.bins.filter((b) => b.facility_name === fac.name);
-                const alertCount = facBins.filter((b) => b.fill_level >= 80).length;
-
-                return (
-                  <g key={fac.code}>
-                    {alertCount > 0 && (
-                      <circle
-                        cx={pt.x}
-                        cy={pt.y}
-                        r={19}
-                        fill="#fecdd3"
-                        stroke="#e11d48"
-                        strokeWidth="1.5"
-                      />
-                    )}
-                    <circle
-                      cx={pt.x}
-                      cy={pt.y}
-                      r={10}
-                      fill={alertCount > 0 ? "#be123c" : "#0f172a"}
-                      stroke="#ffffff"
-                      strokeWidth="2"
-                    />
-                    <text
-                      x={pt.x}
-                      y={pt.y - 24}
-                      textAnchor="middle"
-                      fontSize="11"
-                      fontWeight="600"
-                      fill="#0f172a"
-                    >
-                      {fac.code} · {fac.name.split(" ")[0]}
-                    </text>
-                    {alertCount > 0 && (
-                      <text
-                        x={pt.x}
-                        y={pt.y + 30}
-                        textAnchor="middle"
-                        fontSize="10"
-                        fontWeight="600"
-                        fill="#be123c"
-                      >
-                        {alertCount} overflow
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-
-              {/* CBWTF Treatment Plant */}
-              <g>
-                <rect
-                  x={plantPt.x - 11}
-                  y={plantPt.y - 11}
-                  width={22}
-                  height={22}
-                  rx={4}
-                  fill="#047857"
-                  stroke="#ffffff"
-                  strokeWidth="2"
-                />
-                <text
-                  x={plantPt.x}
-                  y={plantPt.y + 24}
-                  textAnchor="middle"
-                  fontSize="11"
-                  fontWeight="600"
-                  fill="#065f46"
-                >
-                  CBWTF Disposal Plant
-                </text>
-              </g>
-
-              {/* Fleet Vehicles */}
-              {data.vehicles.map((veh) => {
-                const pt = projectLatLngToSvg(veh.lat, veh.lng, mapW, mapH);
-                const isSelected = veh.vehicle_code === displayedVehicleCode;
-                return (
-                  <g key={veh.vehicle_code}>
-                    <rect
-                      x={pt.x - 14}
-                      y={pt.y - 10}
-                      width={28}
-                      height={20}
-                      rx={4}
-                      fill={isSelected ? "#1d4ed8" : "#475569"}
-                      stroke="#ffffff"
-                      strokeWidth="2"
-                    />
-                    <text
-                      x={pt.x}
-                      y={pt.y + 3.5}
-                      textAnchor="middle"
-                      fontSize="9"
-                      fontWeight="700"
-                      fill="#ffffff"
-                    >
-                      {veh.vehicle_code.replace("VAN-", "V")}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* Numbered Stop Markers (staggered when multiple bins share a facility) */}
-              {displayedStops.map((stop, idx) => {
-                const pt = projectLatLngToSvg(stop.lat, stop.lng, mapW, mapH);
-                const sameFacilityBefore = displayedStops
-                  .slice(0, idx)
-                  .filter((prev) => prev.facility_name === stop.facility_name).length;
-                const badgeX = pt.x + 16 + sameFacilityBefore * 20;
-                const badgeY = pt.y - 8;
-                return (
-                  <g key={stop.bin_code}>
-                    <circle
-                      cx={badgeX}
-                      cy={badgeY}
-                      r={9}
-                      fill="#1d4ed8"
-                      stroke="#ffffff"
-                      strokeWidth="1.5"
-                    />
-                    <text
-                      x={badgeX}
-                      y={badgeY + 3.5}
-                      textAnchor="middle"
-                      fontSize="9"
-                      fontWeight="700"
-                      fill="#ffffff"
-                    >
-                      {stop.stop_order}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-
-          {/* Map Legend */}
-          <div className="flex flex-wrap items-center gap-5 text-xs text-slate-600">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full bg-rose-700" aria-hidden="true" />
-              <span>Overflowing Facility</span>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-blue-700" aria-hidden="true" />
-              <span>Assigned Truck</span>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-emerald-700" aria-hidden="true" />
-              <span>CBWTF Treatment Plant</span>
-            </span>
-          </div>
+              <MapPin className="w-8 h-8 text-slate-400" aria-hidden="true" />
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                Google Maps API Key Required
+              </p>
+              <p className="mt-1 text-xs text-slate-500 max-w-sm">
+                Configure GOOGLE_MAPS_API_KEY or VITE_GOOGLE_MAPS_API_KEY in your environment to
+                load the interactive Bhopal hospital and locality map.
+              </p>
+            </div>
+          ) : (
+            <APIProvider
+              apiKey={mapsApiKey}
+              language="en"
+              region="IN"
+              libraries={MAPS_LIBRARIES}
+            >
+              <BhopalLiveMapInner
+                hospitals={bhopalHospitals}
+                treatmentPlant={data.treatment_plant}
+                vehicles={data.vehicles}
+                selectedLocality={selectedLocality}
+                onSelectLocality={setSelectedLocality}
+                onHospitalsMerged={handleHospitalsMerged}
+                routeStopIds={routeStopIds}
+                onToggleRouteStop={handleToggleRouteStop}
+                onClearRouteStops={() => setRouteStopIds([])}
+                onSetRouteStops={setRouteStopIds}
+              />
+            </APIProvider>
+          )}
         </section>
 
-        {/* Right: Route Metrics & Dispatch Queue */}
+        {/* Right: MediTrack Condition-Based Dispatch Queue */}
         <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-5">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
               Optimized Dispatch Plan
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Priority-weighted Haversine TSP order vs. fixed routine collection
+              Priority-weighted condition-based stops vs. fixed routine collection
             </p>
           </div>
 
@@ -416,8 +1165,8 @@ export function RouteMapView({ data, onDataUpdated }: RouteMapViewProps) {
                 No active route dispatched
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                Click &ldquo;Optimize Collection Route&rdquo; to assign the nearest vehicle to
-                overflowing bins.
+                Click &ldquo;Optimize Dispatch Queue&rdquo; to assign the nearest vehicle to
+                overflowing smart bins.
               </p>
             </div>
           ) : (

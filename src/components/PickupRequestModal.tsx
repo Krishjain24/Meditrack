@@ -21,7 +21,7 @@ export function PickupRequestModal({
   onCreated,
 }: PickupRequestModalProps) {
   const [facilityName, setFacilityName] = useState<string>(
-    facilities[0]?.name || "AIIMS Trauma & Ward A"
+    facilities[0]?.name || "AIIMS Bhopal"
   );
   const [category, setCategory] = useState<WasteCategoryKey>("yellow");
   const [priority, setPriority] = useState<"critical" | "high" | "normal">("high");

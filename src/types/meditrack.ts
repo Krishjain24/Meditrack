@@ -154,6 +154,22 @@ export interface DailyWasteTrend {
   total_kg: number;
 }
 
+export interface FacilityComplianceStatus {
+  facility_code: string;
+  facility_name: string;
+  zone: string;
+  total_bins: number;
+  overflow_bins: number;
+  warning_bins: number;
+  locked_bins: number;
+  avg_fill_level: number;
+  tracked_mass_kg: number;
+  pending_alerts: number;
+  verified_disposals: number;
+  compliance_status: "Action Required" | "Watch" | "Compliant";
+  last_updated: string;
+}
+
 export interface DashboardPayload {
   kpis: {
     total_bins: number;
@@ -179,6 +195,7 @@ export interface DashboardPayload {
   benchmarks: BenchmarkMetric[];
   predictive_alerts: PredictiveAlert[];
   daily_trends: DailyWasteTrend[];
+  facility_compliance?: FacilityComplianceStatus[];
 }
 
 export interface ClassificationResult {

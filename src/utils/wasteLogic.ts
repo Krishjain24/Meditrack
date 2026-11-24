@@ -154,10 +154,10 @@ export interface MapBounds {
 }
 
 export const CORRIDOR_BOUNDS: MapBounds = {
-  minLat: 26.803,
-  maxLat: 26.870,
-  minLng: 80.915,
-  maxLng: 80.993,
+  minLat: 23.19,
+  maxLat: 23.31,
+  minLng: 77.39,
+  maxLng: 77.47,
 };
 
 export function projectLatLngToSvg(
@@ -287,5 +287,82 @@ export function computeBinForecasts(bins: SmartBin[]): LocalBinForecast[] {
       };
     })
     .sort((a, b) => a.hours_to_full - b.hours_to_full);
+}
+
+export interface PlaceAddressComponentLike {
+  longText?: string | null;
+  shortText?: string | null;
+  types?: string[];
+}
+
+export function extractBhopalLocality(
+  addressComponents?: PlaceAddressComponentLike[] | null,
+  formattedAddress?: string | null
+): string {
+  if (addressComponents && addressComponents.length > 0) {
+    const priorityTypes = [
+      "sublocality_level_1",
+      "sublocality_level_2",
+      "sublocality",
+      "neighborhood",
+      "sublocality_level_3",
+    ];
+    for (const targetType of priorityTypes) {
+      const match = addressComponents.find((c) => c.types?.includes(targetType));
+      const label = (match?.longText || match?.shortText || "").trim();
+      if (label && label.toLowerCase() !== "bhopal") {
+        return label;
+      }
+    }
+  }
+
+  if (formattedAddress) {
+    const parts = formattedAddress
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+      if (
+        !lower.includes("bhopal") &&
+        !lower.includes("madhya pradesh") &&
+        lower !== "india" &&
+        !/^\d{6}$/.test(part)
+      ) {
+        return part;
+      }
+    }
+  }
+  return "Bhopal";
+}
+
+export function getComplianceStatusDisplay(
+  status: "Action Required" | "Watch" | "Compliant"
+): StatusDisplay {
+  switch (status) {
+    case "Action Required":
+      return { label: "Action Required", symbol: "■", textClass: "text-rose-700" };
+    case "Watch":
+      return { label: "Watch", symbol: "▲", textClass: "text-amber-700" };
+    default:
+      return { label: "Compliant", symbol: "●", textClass: "text-emerald-700" };
+  }
+}
+
+export function isMapsQuotaError(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+      ? err
+      : JSON.stringify(err || "");
+  const upper = msg.toUpperCase();
+  return (
+    upper.includes("RESOURCE_EXHAUSTED") ||
+    upper.includes("OVER_QUERY_LIMIT") ||
+    upper.includes("OVERQUOTAMAPERROR") ||
+    upper.includes("QUOTAEXCEEDED") ||
+    upper.includes("429")
+  );
 }
 

@@ -3,7 +3,7 @@ import { Download, QrCode, Search, ShieldCheck } from "lucide-react";
 import QRCode from "qrcode";
 import { verifyManifestHash } from "../api/client";
 import type { DashboardPayload, DisposalManifest } from "../types/meditrack";
-import { filterLedger, formatUtcTime, getCategoryMeta } from "../utils/wasteLogic";
+import { filterLedger, formatUtcTime, getCategoryMeta, getComplianceStatusDisplay } from "../utils/wasteLogic";
 
 interface ComplianceViewProps {
   data: DashboardPayload;
@@ -30,6 +30,7 @@ export function ComplianceView({ data }: ComplianceViewProps) {
   } | null>(null);
 
   const filtered = filterLedger(data.disposal_ledger, catFilter, searchQuery);
+  const facilityCompliance = data.facility_compliance ?? [];
 
   useEffect(() => {
     if (!selectedManifest && data.disposal_ledger.length > 0) {
@@ -70,7 +71,7 @@ export function ComplianceView({ data }: ComplianceViewProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
             QR Chain-of-Custody &amp; Automated Disposal Reporting
@@ -81,15 +82,109 @@ export function ComplianceView({ data }: ComplianceViewProps) {
           </p>
         </div>
 
-        <a
-          href="/api/py/reports/csv"
-          download="meditrack_cpcb_disposal_report.csv"
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
-        >
-          <Download className="w-4 h-4" aria-hidden="true" />
-          <span>Export CPCB Report (CSV)</span>
-        </a>
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <a
+            href="/api/py/reports/facility-compliance/csv"
+            download="meditrack_facility_compliance_status.csv"
+            data-testid="export-facility-compliance-csv"
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4" aria-hidden="true" />
+            <span>Export Facility Compliance (CSV)</span>
+          </a>
+
+          <a
+            href="/api/py/reports/csv"
+            download="meditrack_cpcb_disposal_report.csv"
+            data-testid="export-disposal-ledger-csv"
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap shrink-0"
+          >
+            <Download className="w-4 h-4" aria-hidden="true" />
+            <span>Export Disposal Ledger (CSV)</span>
+          </a>
+        </div>
       </div>
+
+      {/* Current Facility Waste Compliance Status */}
+      <section
+        aria-labelledby="facility-compliance-heading"
+        className="bg-white border border-slate-200 rounded-xl overflow-hidden"
+      >
+        <div className="px-5 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 id="facility-compliance-heading" className="text-base font-semibold text-slate-900">
+              Current Facility Waste Compliance Status
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Live facility readiness, bin containment lock state, pending overflow tickets, and verified QR disposals
+            </p>
+          </div>
+          <span className="text-xs font-mono text-slate-500">
+            {facilityCompliance.length} monitored facilities
+          </span>
+        </div>
+
+        {facilityCompliance.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            No facility compliance metrics available yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse" data-testid="facility-compliance-table">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-500">
+                  <th className="py-3 px-4">Code &amp; Facility</th>
+                  <th className="py-3 px-3">Zone</th>
+                  <th className="py-3 px-3 text-right">Bins (Ovfl / Warn)</th>
+                  <th className="py-3 px-3 text-right">Locked</th>
+                  <th className="py-3 px-3 text-right">Avg Fill</th>
+                  <th className="py-3 px-3 text-right">Tracked Mass</th>
+                  <th className="py-3 px-3 text-right">Pending / QR</th>
+                  <th className="py-3 px-3">CPCB Status</th>
+                  <th className="py-3 px-4 text-right">Last Telemetry</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-xs">
+                {facilityCompliance.map((fac) => {
+                  const statusDisplay = getComplianceStatusDisplay(fac.compliance_status);
+                  return (
+                    <tr key={fac.facility_code} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4">
+                        <div className="font-semibold text-slate-900">{fac.facility_name}</div>
+                        <div className="font-mono text-slate-500">{fac.facility_code}</div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-700">{fac.zone}</td>
+                      <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-800 whitespace-nowrap">
+                        {fac.total_bins} ({fac.overflow_bins} / {fac.warning_bins})
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-800">
+                        {fac.locked_bins}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono tabular-nums font-semibold text-slate-900">
+                        {fac.avg_fill_level.toFixed(1)}%
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-900 whitespace-nowrap">
+                        {fac.tracked_mass_kg.toFixed(2)} kg
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono tabular-nums text-slate-800 whitespace-nowrap">
+                        {fac.pending_alerts} / {fac.verified_disposals}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <span className={`font-semibold ${statusDisplay.textClass}`}>
+                          {statusDisplay.symbol} {statusDisplay.label}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono tabular-nums text-slate-500 whitespace-nowrap">
+                        {formatUtcTime(fac.last_updated)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* Filters */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">

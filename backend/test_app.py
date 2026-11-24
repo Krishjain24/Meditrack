@@ -75,8 +75,64 @@ class MediTrackPythonTests(unittest.TestCase):
             first_forecast = payload["predictive_alerts"][0]
             self.assertIn("hours_to_full", first_forecast)
             self.assertIn(first_forecast["risk_level"], ("imminent", "upcoming", "stable"))
+            self.assertEqual(len(payload["facility_compliance"]), 4)
         finally:
             conn.close()
+
+    def test_facility_compliance_status_and_csv(self) -> None:
+        conn = meditrack_app.get_conn(self.db_path)
+        try:
+            csv_text = meditrack_app.generate_facility_compliance_csv(conn)
+            self.assertIn("Facility Code", csv_text)
+            self.assertIn("CPCB Compliance Status", csv_text)
+            self.assertIn("FAC-01", csv_text)
+            self.assertIn("AIIMS Bhopal", csv_text)
+            self.assertIn("Hamidia Hospital (GMC Bhopal)", csv_text)
+            self.assertIn("Bansal Hospital Bhopal", csv_text)
+            self.assertIn("People's Hospital Bhopal", csv_text)
+            self.assertIn("Action Required", csv_text)
+        finally:
+            conn.close()
+
+    def test_real_bhopal_facilities_and_legacy_migration(self) -> None:
+        conn = meditrack_app.get_conn(self.db_path)
+        try:
+            payload = meditrack_app.build_dashboard_payload(conn)
+            names = [f["name"] for f in payload["facilities"]]
+            self.assertEqual(
+                names,
+                [
+                    "AIIMS Bhopal",
+                    "Hamidia Hospital (GMC Bhopal)",
+                    "Bansal Hospital Bhopal",
+                    "People's Hospital Bhopal",
+                ],
+            )
+            self.assertEqual(
+                payload["treatment_plant"]["name"],
+                "Bhopal Incinerators Ltd. (CBWTF Govindpura)",
+            )
+            # Simulate legacy placeholder rows and verify init_db migrates cleanly
+            conn.execute(
+                "UPDATE smart_bins SET facility_name = 'City General ICU Block' WHERE bin_code = 'BIN-B01-Y'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        meditrack_app.init_db(self.db_path)
+        conn2 = meditrack_app.get_conn(self.db_path)
+        try:
+            legacy_count = conn2.execute(
+                "SELECT COUNT(*) FROM smart_bins WHERE facility_name = 'City General ICU Block'"
+            ).fetchone()[0]
+            self.assertEqual(legacy_count, 0)
+            bhopal_count = conn2.execute(
+                "SELECT COUNT(*) FROM smart_bins WHERE facility_name = 'Hamidia Hospital (GMC Bhopal)'"
+            ).fetchone()[0]
+            self.assertGreater(bhopal_count, 0)
+        finally:
+            conn2.close()
 
 
 if __name__ == "__main__":

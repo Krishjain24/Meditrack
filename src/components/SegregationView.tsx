@@ -1,5 +1,5 @@
-import { useState, type ChangeEvent, type FormEvent } from "react";
-import { Lock, ShieldCheck, Sparkles, Unlock, Upload } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { Camera, Lock, ShieldCheck, Sparkles, Unlock, Upload, X } from "lucide-react";
 import { classifyImageWithGemini, segregateWaste } from "../api/client";
 import type {
   ClassificationResult,
@@ -20,7 +20,7 @@ interface SegregationViewProps {
 
 export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
   const [facilityName, setFacilityName] = useState<string>(
-    data.facilities[0]?.name || "AIIMS Trauma & Ward A"
+    data.facilities[0]?.name || "AIIMS Bhopal"
   );
   const [itemName, setItemName] = useState<string>(CLINICAL_SPECIMENS[0].item_name);
   const [description, setDescription] = useState<string>(CLINICAL_SPECIMENS[0].description);
@@ -28,6 +28,10 @@ export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
   const [imagePreview, setImagePreview] = useState<string>("");
   const [imageMime, setImageMime] = useState<string>("image/jpeg");
   const [hintCategory, setHintCategory] = useState<WasteCategoryKey | "">("");
+
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [aiInspecting, setAiInspecting] = useState(false);
@@ -48,6 +52,65 @@ export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
     setWeightG(String(spec.weight_g));
     setHintCategory("");
     setErrorMsg("");
+  }
+
+  function stopCamera() {
+    if (streamRef.current) {
+      for (const track of streamRef.current.getTracks()) {
+        track.stop();
+      }
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        for (const track of streamRef.current.getTracks()) {
+          track.stop();
+        }
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  async function handleStartCamera() {
+    setErrorMsg("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErrorMsg("Live camera access is unavailable in this browser; upload a photo instead.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+      window.requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      });
+    } catch {
+      setErrorMsg("Camera permission denied or no camera device detected.");
+    }
+  }
+
+  function handleCaptureFrame() {
+    const video = videoRef.current;
+    if (!video) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
+    setImagePreview(dataUrl);
+    setImageMime("image/jpeg");
+    stopCamera();
   }
 
   function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
@@ -144,16 +207,16 @@ export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
         <section className="lg:col-span-5 bg-white border border-slate-200 rounded-xl p-6 space-y-5">
           <div>
             <h2 className="text-base font-semibold text-slate-900">
-              Specimen &amp; Camera Input
+              Ward Camera &amp; Item Classification
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Select a clinical sample, enter item details, or upload an image frame
+              Enter biomedical item details, capture a live ward camera frame, or upload a photo
             </p>
           </div>
 
           <div className="space-y-2">
             <span className="block text-xs font-medium text-slate-700">
-              Quick Clinical Specimens
+              CPCB Rule 2016 Standard Waste Classes
             </span>
             <div className="grid grid-cols-2 gap-2">
               {CLINICAL_SPECIMENS.map((spec) => (
@@ -256,15 +319,23 @@ export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
                 htmlFor="seg-image"
                 className="block text-xs font-medium text-slate-700 mb-1"
               >
-                Camera Frame / Photo Upload (Optional)
+                Live Ward Camera / Photo Upload
               </label>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={cameraOpen ? stopCamera : handleStartCamera}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg whitespace-nowrap shrink-0"
+                >
+                  <Camera className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>{cameraOpen ? "Close Camera" : "Live Camera"}</span>
+                </button>
                 <label
                   htmlFor="seg-image"
-                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-lg cursor-pointer whitespace-nowrap shrink-0"
                 >
                   <Upload className="w-3.5 h-3.5" aria-hidden="true" />
-                  <span>Choose Image</span>
+                  <span>Upload Photo</span>
                 </label>
                 <input
                   id="seg-image"
@@ -273,7 +344,7 @@ export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
                   onChange={handleImageUpload}
                   className="sr-only"
                 />
-                {imagePreview ? (
+                {imagePreview && (
                   <button
                     type="button"
                     onClick={handleGeminiInspect}
@@ -281,19 +352,46 @@ export function SegregationView({ data, onDataUpdated }: SegregationViewProps) {
                     className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg whitespace-nowrap shrink-0 disabled:opacity-60"
                   >
                     <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>{aiInspecting ? "Inspecting..." : "Gemini Vision Inspect"}</span>
+                    <span>{aiInspecting ? "Inspecting..." : "Gemini Vision Identify"}</span>
                   </button>
-                ) : (
-                  <span className="text-xs text-slate-500">
-                    No frame uploaded; Python feature engine active
-                  </span>
                 )}
               </div>
+
+              {cameraOpen && (
+                <div className="mt-3 p-3 bg-slate-900 rounded-xl space-y-2">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-44 object-cover rounded-lg bg-black"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={stopCamera}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Cancel</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCaptureFrame}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+                    >
+                      <Camera className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>Capture Frame</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {imagePreview && (
                 <div className="mt-3 flex items-center gap-3">
                   <img
                     src={imagePreview}
-                    alt="Uploaded biomedical waste specimen"
+                    alt="Captured biomedical waste item"
                     referrerPolicy="no-referrer"
                     className="w-20 h-16 object-cover rounded-lg border border-slate-200"
                   />

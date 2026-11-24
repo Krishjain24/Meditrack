@@ -118,39 +118,39 @@ WASTE_CATEGORIES: dict[str, dict[str, Any]] = {
 
 FACILITIES: list[dict[str, Any]] = [
     {
-        "name": "AIIMS Trauma & Ward A",
+        "name": "AIIMS Bhopal",
         "code": "FAC-01",
-        "lat": 26.8467,
-        "lng": 80.9462,
-        "zone": "Central Medical Corridor",
+        "lat": 23.2106,
+        "lng": 77.4574,
+        "zone": "Saket Nagar, Habib Ganj",
     },
     {
-        "name": "City General ICU Block",
+        "name": "Hamidia Hospital (GMC Bhopal)",
         "code": "FAC-02",
-        "lat": 26.8615,
-        "lng": 80.9228,
-        "zone": "North Clinical Sector",
+        "lat": 23.2585,
+        "lng": 77.4020,
+        "zone": "Royal Market, Kohefiza",
     },
     {
-        "name": "Apex Diagnostics & Pathology",
+        "name": "Bansal Hospital Bhopal",
         "code": "FAC-03",
-        "lat": 26.8352,
-        "lng": 80.9710,
-        "zone": "East Lab District",
+        "lat": 23.2031,
+        "lng": 77.4229,
+        "zone": "Sector C, Shahpura",
     },
     {
-        "name": "Metro Surgical Center",
+        "name": "People's Hospital Bhopal",
         "code": "FAC-04",
-        "lat": 26.8240,
-        "lng": 80.9315,
-        "zone": "South Hospital Ring",
+        "lat": 23.2970,
+        "lng": 77.4250,
+        "zone": "Peoples Campus, Bhanpur",
     },
 ]
 
 CBWTF_PLANT = {
-    "name": "Central CBWTF Treatment Facility",
-    "lat": 26.8095,
-    "lng": 80.9850,
+    "name": "Bhopal Incinerators Ltd. (CBWTF Govindpura)",
+    "lat": 23.2640,
+    "lng": 77.4475,
 }
 
 
@@ -281,7 +281,24 @@ def init_db(db_path: str = DB_PATH) -> None:
             conn.commit()
 
             count = cur.execute("SELECT COUNT(*) FROM smart_bins").fetchone()[0]
-            if count == 0:
+            has_legacy_sample = (
+                cur.execute(
+                    "SELECT COUNT(*) FROM smart_bins WHERE facility_name IN ('AIIMS Trauma & Ward A', 'City General ICU Block', 'Apex Diagnostics & Pathology', 'Metro Surgical Center')"
+                ).fetchone()[0]
+                > 0
+            )
+            if count == 0 or has_legacy_sample:
+                if has_legacy_sample:
+                    cur.executescript(
+                        """
+                        DELETE FROM smart_bins;
+                        DELETE FROM collection_alerts;
+                        DELETE FROM vehicles;
+                        DELETE FROM segregation_events;
+                        DELETE FROM disposal_ledger;
+                        """
+                    )
+                    conn.commit()
                 seed_database(conn)
         finally:
             conn.close()
@@ -290,18 +307,18 @@ def init_db(db_path: str = DB_PATH) -> None:
 def seed_database(conn: sqlite3.Connection) -> None:
     now = utc_now_iso()
     bins_seed = [
-        ("BIN-A01-Y", "AIIMS Trauma & Ward A", "Emergency OT-1", "yellow", 88.0, 19.4, 22.0, 1, "locked", 24.8, 62, 91, 26.8467, 80.9462, "overflow_alert"),
-        ("BIN-A02-R", "AIIMS Trauma & Ward A", "Surgical Ward 2", "red", 54.0, 11.2, 25.0, 0, "closed", 22.1, 21, 96, 26.8471, 80.9468, "nominal"),
-        ("BIN-A03-W", "AIIMS Trauma & Ward A", "Trauma Triage", "white", 72.0, 9.6, 15.0, 0, "closed", 21.8, 12, 88, 26.8461, 80.9455, "warning"),
-        ("BIN-B01-Y", "City General ICU Block", "Critical Care ICU", "yellow", 92.0, 21.6, 24.0, 1, "locked", 25.6, 74, 84, 26.8615, 80.9228, "overflow_alert"),
-        ("BIN-B02-R", "City General ICU Block", "Dialysis Unit", "red", 83.0, 18.8, 24.0, 0, "closed", 23.4, 39, 92, 26.8620, 80.9234, "overflow_alert"),
-        ("BIN-B03-B", "City General ICU Block", "Pharmacy & Prep", "blue", 41.0, 7.4, 20.0, 0, "closed", 21.5, 14, 97, 26.8610, 80.9221, "nominal"),
-        ("BIN-C01-W", "Apex Diagnostics & Pathology", "Phlebotomy Bay", "white", 86.0, 12.9, 15.0, 1, "locked", 22.0, 16, 89, 26.8352, 80.9710, "overflow_alert"),
-        ("BIN-C02-B", "Apex Diagnostics & Pathology", "Histology Lab", "blue", 64.0, 12.1, 20.0, 0, "closed", 22.3, 19, 93, 26.8358, 80.9715, "warning"),
-        ("BIN-C03-Y", "Apex Diagnostics & Pathology", "Microbiology Suite", "yellow", 48.0, 9.8, 22.0, 0, "closed", 23.0, 29, 95, 26.8347, 80.9704, "nominal"),
-        ("BIN-D01-R", "Metro Surgical Center", "Post-Op Recovery", "red", 37.0, 8.5, 25.0, 0, "closed", 21.9, 17, 98, 26.8240, 80.9315, "nominal"),
-        ("BIN-D02-Y", "Metro Surgical Center", "General OT-3", "yellow", 67.0, 14.2, 22.0, 0, "closed", 23.8, 41, 90, 26.8245, 80.9321, "warning"),
-        ("BIN-D03-W", "Metro Surgical Center", "Injection Clinic", "white", 29.0, 4.1, 15.0, 0, "closed", 21.4, 11, 99, 26.8236, 80.9310, "nominal"),
+        ("BIN-A01-Y", "AIIMS Bhopal", "Trauma & Emergency OT-1", "yellow", 88.0, 19.4, 22.0, 1, "locked", 24.8, 62, 91, 23.2106, 77.4574, "overflow_alert"),
+        ("BIN-A02-R", "AIIMS Bhopal", "IPD Surgical Ward 2", "red", 54.0, 11.2, 25.0, 0, "closed", 22.1, 21, 96, 23.2110, 77.4581, "nominal"),
+        ("BIN-A03-W", "AIIMS Bhopal", "Trauma Triage Bay", "white", 72.0, 9.6, 15.0, 0, "closed", 21.8, 12, 88, 23.2101, 77.4568, "warning"),
+        ("BIN-B01-Y", "Hamidia Hospital (GMC Bhopal)", "Critical Care ICU", "yellow", 92.0, 21.6, 24.0, 1, "locked", 25.6, 74, 84, 23.2585, 77.4020, "overflow_alert"),
+        ("BIN-B02-R", "Hamidia Hospital (GMC Bhopal)", "Nephrology Dialysis Unit", "red", 83.0, 18.8, 24.0, 0, "closed", 23.4, 39, 92, 23.2591, 77.4026, "overflow_alert"),
+        ("BIN-B03-B", "Hamidia Hospital (GMC Bhopal)", "Central Pharmacy & Prep", "blue", 41.0, 7.4, 20.0, 0, "closed", 21.5, 14, 97, 23.2580, 77.4014, "nominal"),
+        ("BIN-C01-W", "Bansal Hospital Bhopal", "Phlebotomy & Diagnostics", "white", 86.0, 12.9, 15.0, 1, "locked", 22.0, 16, 89, 23.2031, 77.4229, "overflow_alert"),
+        ("BIN-C02-B", "Bansal Hospital Bhopal", "Histopathology Lab", "blue", 64.0, 12.1, 20.0, 0, "closed", 22.3, 19, 93, 23.2037, 77.4234, "warning"),
+        ("BIN-C03-Y", "Bansal Hospital Bhopal", "Microbiology Suite", "yellow", 48.0, 9.8, 22.0, 0, "closed", 23.0, 29, 95, 23.2026, 77.4222, "nominal"),
+        ("BIN-D01-R", "People's Hospital Bhopal", "Post-Op Recovery Ward", "red", 37.0, 8.5, 25.0, 0, "closed", 21.9, 17, 98, 23.2970, 77.4250, "nominal"),
+        ("BIN-D02-Y", "People's Hospital Bhopal", "General OT-3", "yellow", 67.0, 14.2, 22.0, 0, "closed", 23.8, 41, 90, 23.2975, 77.4256, "warning"),
+        ("BIN-D03-W", "People's Hospital Bhopal", "Immunization & Injection Clinic", "white", 29.0, 4.1, 15.0, 0, "closed", 21.4, 11, 99, 23.2965, 77.4244, "nominal"),
     ]
     conn.executemany(
         """
@@ -314,10 +331,10 @@ def seed_database(conn: sqlite3.Connection) -> None:
     )
 
     alerts_seed = [
-        ("ALT-2601", "BIN-B01-Y", "City General ICU Block", "Critical Care ICU", "yellow", 92.0, "critical", "ESP32 Ultrasonic >= 90%", "pending", None, "Auto-locked lid to prevent infectious overflow"),
-        ("ALT-2602", "BIN-A01-Y", "AIIMS Trauma & Ward A", "Emergency OT-1", "yellow", 88.0, "critical", "ESP32 Ultrasonic >= 80%", "pending", None, "High bio-gas VOC reading (62 ppm); priority dispatch"),
-        ("ALT-2603", "BIN-C01-W", "Apex Diagnostics & Pathology", "Phlebotomy Bay", "white", 86.0, "high", "ESP32 Load Cell >= 85%", "pending", None, "Sharps container near capacity; puncture-safe swap required"),
-        ("ALT-2604", "BIN-B02-R", "City General ICU Block", "Dialysis Unit", "red", 83.0, "high", "ESP32 Ultrasonic >= 80%", "pending", None, "IV tubing volume threshold crossed"),
+        ("ALT-2601", "BIN-B01-Y", "Hamidia Hospital (GMC Bhopal)", "Critical Care ICU", "yellow", 92.0, "critical", "ESP32 Ultrasonic >= 90%", "pending", None, "Auto-locked lid to prevent infectious overflow"),
+        ("ALT-2602", "BIN-A01-Y", "AIIMS Bhopal", "Trauma & Emergency OT-1", "yellow", 88.0, "critical", "ESP32 Ultrasonic >= 80%", "pending", None, "High bio-gas VOC reading (62 ppm); priority dispatch"),
+        ("ALT-2603", "BIN-C01-W", "Bansal Hospital Bhopal", "Phlebotomy & Diagnostics", "white", 86.0, "high", "ESP32 Load Cell >= 85%", "pending", None, "Sharps container near capacity; puncture-safe swap required"),
+        ("ALT-2604", "BIN-B02-R", "Hamidia Hospital (GMC Bhopal)", "Nephrology Dialysis Unit", "red", 83.0, "high", "ESP32 Ultrasonic >= 80%", "pending", None, "IV tubing volume threshold crossed"),
     ]
     conn.executemany(
         """
@@ -330,9 +347,9 @@ def seed_database(conn: sqlite3.Connection) -> None:
     )
 
     vehicles_seed = [
-        ("VAN-01", "R. Deshmukh", 26.8510, 80.9380, 400.0, 68.5, "idle", "[]"),
-        ("VAN-02", "S. Patnaik", 26.8320, 80.9610, 350.0, 42.0, "idle", "[]"),
-        ("VAN-03", "A. Verma", 26.8190, 80.9270, 450.0, 110.0, "idle", "[]"),
+        ("VAN-01", "R. Deshmukh", 23.2313, 77.4326, 400.0, 68.5, "idle", "[]"),
+        ("VAN-02", "S. Patnaik", 23.2495, 77.4190, 350.0, 42.0, "idle", "[]"),
+        ("VAN-03", "A. Verma", 23.2740, 77.4110, 450.0, 110.0, "idle", "[]"),
     ]
     conn.executemany(
         """
@@ -344,10 +361,10 @@ def seed_database(conn: sqlite3.Connection) -> None:
     )
 
     events_seed = [
-        (now, "Blood-Soaked Surgical Gauze", "yellow", 0.96, "Python Vision + Spectral Rule", "BIN-A01-Y", "AIIMS Trauma & Ward A", 340.0, "Yellow Unlocked / Others Locked", "Incineration / Plasma Pyrolysis", "ESP32-Cam-01"),
-        (now, "Used IV Infusion Tubing", "red", 0.94, "Python Vision + Spectral Rule", "BIN-B02-R", "City General ICU Block", 210.0, "Red Unlocked / Others Locked", "Autoclaving + Shredding", "ESP32-Cam-04"),
-        (now, "22G Hypodermic Needle", "white", 0.98, "Python Vision + Spectral Rule", "BIN-C01-W", "Apex Diagnostics & Pathology", 45.0, "White Unlocked / Others Locked", "Autoclaving + Encapsulation", "ESP32-Cam-07"),
-        (now, "Discarded Cefixime Glass Ampoule", "blue", 0.91, "Python Vision + Spectral Rule", "BIN-C02-B", "Apex Diagnostics & Pathology", 120.0, "Blue Unlocked / Others Locked", "Chemical Disinfection + Recycling", "ESP32-Cam-08"),
+        (now, "Blood-Soaked Surgical Gauze", "yellow", 0.96, "Python Vision + Spectral Rule", "BIN-A01-Y", "AIIMS Bhopal", 340.0, "Yellow Unlocked / Others Locked", "Incineration / Plasma Pyrolysis", "Ward-Cam-AIIMS-01"),
+        (now, "Used IV Infusion Tubing", "red", 0.94, "Python Vision + Spectral Rule", "BIN-B02-R", "Hamidia Hospital (GMC Bhopal)", 210.0, "Red Unlocked / Others Locked", "Autoclaving + Shredding", "Ward-Cam-GMC-04"),
+        (now, "22G Hypodermic Needle", "white", 0.98, "Python Vision + Spectral Rule", "BIN-C01-W", "Bansal Hospital Bhopal", 45.0, "White Unlocked / Others Locked", "Autoclaving + Encapsulation", "Ward-Cam-Bansal-07"),
+        (now, "Discarded Cefixime Glass Ampoule", "blue", 0.91, "Python Vision + Spectral Rule", "BIN-C02-B", "Bansal Hospital Bhopal", 120.0, "Blue Unlocked / Others Locked", "Chemical Disinfection + Recycling", "Ward-Cam-Bansal-08"),
     ]
     conn.executemany(
         """
@@ -360,10 +377,10 @@ def seed_database(conn: sqlite3.Connection) -> None:
     )
 
     ledger_seed = [
-        ("MAN-2026-8841", "BIN-A01-Y", "AIIMS Trauma & Ward A", "yellow", 18.2, "Incineration / Plasma Pyrolysis", "VAN-01", now, now, "verified"),
-        ("MAN-2026-8842", "BIN-B02-R", "City General ICU Block", "red", 16.5, "Autoclaving + Shredding", "VAN-02", now, now, "verified"),
-        ("MAN-2026-8843", "BIN-C01-W", "Apex Diagnostics & Pathology", "white", 11.4, "Autoclaving + Encapsulation", "VAN-02", now, now, "verified"),
-        ("MAN-2026-8844", "BIN-D02-Y", "Metro Surgical Center", "yellow", 14.9, "Incineration / Plasma Pyrolysis", "VAN-03", now, now, "verified"),
+        ("MAN-2026-8841", "BIN-A01-Y", "AIIMS Bhopal", "yellow", 18.2, "Incineration / Plasma Pyrolysis", "VAN-01", now, now, "verified"),
+        ("MAN-2026-8842", "BIN-B02-R", "Hamidia Hospital (GMC Bhopal)", "red", 16.5, "Autoclaving + Shredding", "VAN-02", now, now, "verified"),
+        ("MAN-2026-8843", "BIN-C01-W", "Bansal Hospital Bhopal", "white", 11.4, "Autoclaving + Encapsulation", "VAN-02", now, now, "verified"),
+        ("MAN-2026-8844", "BIN-D02-Y", "People's Hospital Bhopal", "yellow", 14.9, "Incineration / Plasma Pyrolysis", "VAN-03", now, now, "verified"),
     ]
     for m_id, b_code, fac, cat, wt, treat, veh, p_time, d_time, c_stat in ledger_seed:
         qr_payload = f"MEDITRACK|{m_id}|{b_code}|{cat.upper()}|{wt}KG|{treat}|{d_time}"
@@ -688,6 +705,7 @@ def build_dashboard_payload(conn: sqlite3.Connection) -> dict[str, Any]:
 
     predictive_alerts = compute_predictive_alerts(bins, alerts)
     daily_trends = compute_daily_waste_trends(bins, ledger)
+    facility_compliance = compute_facility_compliance_status(bins, alerts, ledger)
 
     return {
         "kpis": {
@@ -710,7 +728,64 @@ def build_dashboard_payload(conn: sqlite3.Connection) -> dict[str, Any]:
         "benchmarks": benchmarks,
         "predictive_alerts": predictive_alerts,
         "daily_trends": daily_trends,
+        "facility_compliance": facility_compliance,
     }
+
+
+def compute_facility_compliance_status(
+    bins: list[dict[str, Any]],
+    alerts: list[dict[str, Any]],
+    ledger: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    statuses: list[dict[str, Any]] = []
+    for fac in FACILITIES:
+        name = fac["name"]
+        fac_bins = [b for b in bins if b["facility_name"] == name]
+        fac_alerts = [
+            a for a in alerts
+            if a["facility_name"] == name and a["status"] in ("pending", "assigned")
+        ]
+        fac_verified = [
+            l for l in ledger
+            if l["facility_name"] == name and l["compliance_status"] == "verified"
+        ]
+        overflow_count = sum(1 for b in fac_bins if float(b["fill_level"]) >= 80.0)
+        warning_count = sum(1 for b in fac_bins if 60.0 <= float(b["fill_level"]) < 80.0)
+        locked_count = sum(1 for b in fac_bins if int(b["lid_locked"]) == 1)
+        avg_fill = round(
+            sum(float(b["fill_level"]) for b in fac_bins) / max(1, len(fac_bins)), 1
+        )
+        tracked_mass = round(sum(float(b["weight_kg"]) for b in fac_bins), 2)
+        last_updated = max(
+            (str(b["last_updated"]) for b in fac_bins),
+            default=utc_now_iso(),
+        )
+
+        if overflow_count > 0 or len(fac_alerts) > 0:
+            compliance_status = "Action Required"
+        elif warning_count > 0:
+            compliance_status = "Watch"
+        else:
+            compliance_status = "Compliant"
+
+        statuses.append(
+            {
+                "facility_code": fac["code"],
+                "facility_name": name,
+                "zone": fac["zone"],
+                "total_bins": len(fac_bins),
+                "overflow_bins": overflow_count,
+                "warning_bins": warning_count,
+                "locked_bins": locked_count,
+                "avg_fill_level": avg_fill,
+                "tracked_mass_kg": tracked_mass,
+                "pending_alerts": len(fac_alerts),
+                "verified_disposals": len(fac_verified),
+                "compliance_status": compliance_status,
+                "last_updated": last_updated,
+            }
+        )
+    return statuses
 
 
 def create_alert_if_needed(conn: sqlite3.Connection, bin_row: dict[str, Any], trigger_source: str, notes: str = "") -> dict[str, Any] | None:
@@ -1003,6 +1078,52 @@ def generate_cpcb_csv(conn: sqlite3.Connection) -> str:
     return output.getvalue()
 
 
+def generate_facility_compliance_csv(conn: sqlite3.Connection) -> str:
+    bins = [row_to_dict(r) for r in conn.execute("SELECT * FROM smart_bins ORDER BY facility_name ASC").fetchall()]
+    alerts = [row_to_dict(r) for r in conn.execute("SELECT * FROM collection_alerts").fetchall()]
+    ledger = [row_to_dict(r) for r in conn.execute("SELECT * FROM disposal_ledger").fetchall()]
+    rows = compute_facility_compliance_status(bins, alerts, ledger)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Facility Code",
+            "Healthcare Facility",
+            "Locality / Zone",
+            "Active Smart Bins",
+            "Overflow Bins (>=80%)",
+            "Warning Bins (60-79%)",
+            "Locked Containment Bins",
+            "Avg Fill Level (%)",
+            "Tracked Waste Mass (kg)",
+            "Pending Pickup Alerts",
+            "Verified QR Disposals",
+            "CPCB Compliance Status",
+            "Last Telemetry Update (UTC)",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row["facility_code"],
+                row["facility_name"],
+                row["zone"],
+                row["total_bins"],
+                row["overflow_bins"],
+                row["warning_bins"],
+                row["locked_bins"],
+                f"{row['avg_fill_level']:.1f}",
+                f"{row['tracked_mass_kg']:.2f}",
+                row["pending_alerts"],
+                row["verified_disposals"],
+                row["compliance_status"],
+                row["last_updated"],
+            ]
+        )
+    return output.getvalue()
+
+
 class MediTrackHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -1084,6 +1205,16 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                     elif path == "/api/py/reports/csv":
                         csv_data = generate_cpcb_csv(conn)
                         self._send_csv("meditrack_cpcb_disposal_report.csv", csv_data)
+                    elif path == "/api/py/reports/facility-compliance/csv":
+                        csv_data = generate_facility_compliance_csv(conn)
+                        self._send_csv("meditrack_facility_compliance_status.csv", csv_data)
+                    elif path == "/api/py/config/maps":
+                        api_key = (
+                            os.environ.get("VITE_GOOGLE_MAPS_API_KEY")
+                            or os.environ.get("GOOGLE_MAPS_API_KEY")
+                            or ""
+                        )
+                        self._send_json(200, {"apiKey": api_key})
                     else:
                         self._send_json(404, {"error": f"Unknown endpoint: {path}"})
                 finally:
@@ -1108,7 +1239,7 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                     if path == "/api/py/segregate":
                         item_name = str(body.get("item_name", "")).strip()
                         description = str(body.get("description", "")).strip()
-                        facility_name = str(body.get("facility_name", "AIIMS Trauma & Ward A")).strip()
+                        facility_name = str(body.get("facility_name", FACILITIES[0]["name"])).strip()
                         image_base64 = str(body.get("image_base64", "")).strip()
                         hint_category = str(body.get("hint_category", "")).strip().lower()
                         weight_g = float(body.get("weight_g", 240.0) or 240.0)
@@ -1199,13 +1330,73 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                             },
                         )
 
+                    elif path == "/api/py/bins":
+                        bin_code = str(body.get("bin_code", "")).strip().upper()
+                        facility_name = str(body.get("facility_name", FACILITIES[0]["name"])).strip()
+                        ward = str(body.get("ward", "")).strip()
+                        category = str(body.get("category", "yellow")).strip().lower()
+                        capacity_kg = float(body.get("capacity_kg", 25.0) or 25.0)
+                        fill_level = max(0.0, min(100.0, float(body.get("fill_level", 0.0) or 0.0)))
+                        weight_kg = round((capacity_kg * fill_level) / 100.0, 2)
+
+                        if not bin_code or not ward:
+                            self._send_json(400, {"error": "bin_code and ward are required to register a smart bin."})
+                            return
+                        if category not in WASTE_CATEGORIES:
+                            self._send_json(400, {"error": f"Invalid CPCB waste category: {category}"})
+                            return
+
+                        fac_meta = next((f for f in FACILITIES if f["name"] == facility_name), FACILITIES[0])
+                        now = utc_now_iso()
+                        lid_locked = 1 if fill_level >= 92 else 0
+                        lid_status = "locked" if lid_locked else "closed"
+                        bin_status = compute_bin_status(fill_level, "nominal")
+
+                        try:
+                            conn.execute(
+                                """
+                                INSERT INTO smart_bins (
+                                    bin_code, facility_name, ward, category, fill_level, weight_kg, capacity_kg,
+                                    lid_locked, lid_status, temp_c, gas_ppm, battery_pct, lat, lng, status, last_updated
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    bin_code,
+                                    facility_name,
+                                    ward,
+                                    category,
+                                    fill_level,
+                                    weight_kg,
+                                    capacity_kg,
+                                    lid_locked,
+                                    lid_status,
+                                    22.5,
+                                    16,
+                                    100,
+                                    fac_meta["lat"],
+                                    fac_meta["lng"],
+                                    bin_status,
+                                    now,
+                                ),
+                            )
+                            conn.commit()
+                        except sqlite3.IntegrityError:
+                            self._send_json(409, {"error": f"Smart bin {bin_code} already exists."})
+                            return
+
+                        created_bin = row_to_dict(
+                            conn.execute("SELECT * FROM smart_bins WHERE bin_code = ?", (bin_code,)).fetchone()
+                        )
+                        create_alert_if_needed(conn, created_bin, "Registered Smart Bin Threshold")
+                        self._send_json(201, {"bin": created_bin, "dashboard": build_dashboard_payload(conn)})
+
                     elif path == "/api/py/bins/telemetry":
-                        action = str(body.get("action", "simulate_drop"))
+                        action = str(body.get("action", "record_reading"))
                         bin_code = str(body.get("bin_code", "")).strip()
                         now = utc_now_iso()
 
-                        if action == "simulate_tick":
-                            # Advance 3 bins realistically
+                        if action in ("simulate_tick", "poll_sensors"):
+                            # Refresh active ward sensor nodes
                             rows = conn.execute("SELECT * FROM smart_bins ORDER BY id ASC").fetchall()
                             for idx, r in enumerate(rows):
                                 if r["fill_level"] < 96 and idx % 3 == int(time.time()) % 3:
@@ -1221,7 +1412,7 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                                     )
                                     conn.commit()
                                     updated = row_to_dict(conn.execute("SELECT * FROM smart_bins WHERE id = ?", (r["id"],)).fetchone())
-                                    create_alert_if_needed(conn, updated, "ESP32 Periodic Telemetry")
+                                    create_alert_if_needed(conn, updated, "ESP32 Ultrasonic Telemetry")
                             self._send_json(200, {"dashboard": build_dashboard_payload(conn)})
                             return
 
@@ -1243,16 +1434,25 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                                 (new_lock, new_lid_status, now, bin_code),
                             )
                             conn.commit()
-                        elif action == "simulate_drop":
-                            delta_fill = float(body.get("delta_fill", 15.0) or 15.0)
-                            nf = round(min(100.0, b["fill_level"] + delta_fill), 1)
-                            nw = round(b["weight_kg"] + (b["capacity_kg"] * delta_fill / 100.0), 2)
+                        elif action in ("simulate_drop", "record_reading"):
+                            if "fill_level" in body and body["fill_level"] is not None:
+                                nf = round(max(0.0, min(100.0, float(body["fill_level"]))), 1)
+                                nw = (
+                                    round(float(body["weight_kg"]), 2)
+                                    if body.get("weight_kg") is not None
+                                    else round((b["capacity_kg"] * nf) / 100.0, 2)
+                                )
+                            else:
+                                delta_fill = float(body.get("delta_fill", 15.0) or 15.0)
+                                nf = round(min(100.0, b["fill_level"] + delta_fill), 1)
+                                nw = round(b["weight_kg"] + (b["capacity_kg"] * delta_fill / 100.0), 2)
                             ll = 1 if nf >= 92 else b["lid_locked"]
                             ls = "locked" if ll else b["lid_status"]
                             ns = compute_bin_status(nf, b["status"])
+                            gas_ppm = int(body["gas_ppm"]) if body.get("gas_ppm") is not None else min(120, b["gas_ppm"] + 5)
                             conn.execute(
-                                "UPDATE smart_bins SET fill_level = ?, weight_kg = ?, lid_locked = ?, lid_status = ?, gas_ppm = MIN(120, gas_ppm + 5), status = ?, last_updated = ? WHERE bin_code = ?",
-                                (nf, nw, ll, ls, ns, now, bin_code),
+                                "UPDATE smart_bins SET fill_level = ?, weight_kg = ?, lid_locked = ?, lid_status = ?, gas_ppm = ?, status = ?, last_updated = ? WHERE bin_code = ?",
+                                (nf, nw, ll, ls, gas_ppm, ns, now, bin_code),
                             )
                             conn.commit()
                             updated = row_to_dict(conn.execute("SELECT * FROM smart_bins WHERE bin_code = ?", (bin_code,)).fetchone())

@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Clock, Lock, Plus, RefreshCw, Search, Unlock } from "lucide-react";
+import { Clock, Lock, Plus, RefreshCw, Search, ServerCog, Unlock, X } from "lucide-react";
 import {
   completeBinCollection,
   createPickupRequest,
+  registerSmartBin,
   sendBinTelemetryAction,
 } from "../api/client";
-import type { DashboardPayload, PredictiveAlert } from "../types/meditrack";
+import type { DashboardPayload, PredictiveAlert, WasteCategoryKey } from "../types/meditrack";
 import {
   filterBins,
   formatDurationHours,
@@ -31,9 +32,20 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [busyBin, setBusyBin] = useState<string | null>(null);
-  const [ticking, setTicking] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [dispatchMsg, setDispatchMsg] = useState<string>("");
+
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [newBinCode, setNewBinCode] = useState("");
+  const [newFacility, setNewFacility] = useState(
+    data.facilities[0]?.name || "AIIMS Bhopal"
+  );
+  const [newWard, setNewWard] = useState("");
+  const [newCategory, setNewCategory] = useState<WasteCategoryKey>("yellow");
+  const [newCapacityKg, setNewCapacityKg] = useState("25");
+  const [newFillLevel, setNewFillLevel] = useState("0");
+  const [registering, setRegistering] = useState(false);
 
   const filtered = filterBins(data.bins, statusFilter, searchQuery);
   const forecasts = data.predictive_alerts ?? [];
@@ -69,25 +81,25 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
     }
   }
 
-  async function handleTelemetryTick() {
-    setTicking(true);
+  async function handleSyncSensors() {
+    setSyncing(true);
     setErrorMsg("");
     try {
-      const res = await sendBinTelemetryAction({ action: "simulate_tick" });
+      const res = await sendBinTelemetryAction({ action: "poll_sensors" });
       onDataUpdated(res.dashboard);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Telemetry tick failed");
+      setErrorMsg(err instanceof Error ? err.message : "Sensor sync failed");
     } finally {
-      setTicking(false);
+      setSyncing(false);
     }
   }
 
-  async function handleSimulateDrop(binCode: string) {
+  async function handleLogIntake(binCode: string) {
     setBusyBin(binCode);
     setErrorMsg("");
     try {
       const res = await sendBinTelemetryAction({
-        action: "simulate_drop",
+        action: "record_reading",
         bin_code: binCode,
         delta_fill: 15,
       });
@@ -128,6 +140,41 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
     }
   }
 
+  async function handleRegisterBinSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const code = newBinCode.trim().toUpperCase();
+    const ward = newWard.trim();
+    if (!code || !ward) {
+      setErrorMsg("Enter both a bin code (e.g., BIN-A04-Y) and hospital ward name.");
+      return;
+    }
+    setRegistering(true);
+    setErrorMsg("");
+    setDispatchMsg("");
+    try {
+      const res = await registerSmartBin({
+        bin_code: code,
+        facility_name: newFacility,
+        ward,
+        category: newCategory,
+        capacity_kg: Math.max(5, Number(newCapacityKg) || 25),
+        fill_level: Math.max(0, Math.min(100, Number(newFillLevel) || 0)),
+      });
+      onDataUpdated(res.dashboard);
+      setDispatchMsg(
+        `Registered ESP32 smart bin ${res.bin.bin_code} at ${res.bin.facility_name} (${res.bin.ward}).`
+      );
+      setNewBinCode("");
+      setNewWard("");
+      setNewFillLevel("0");
+      setShowRegisterForm(false);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to register smart bin");
+    } finally {
+      setRegistering(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -137,23 +184,163 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
           </h1>
           <p className="text-sm text-slate-600 mt-1">
             Live ultrasonic fill levels, load cell mass, bio-gas VOC readings, and automated lid
-            interlocks across hospital wards.
+            interlocks across Bhopal hospital wards.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleTelemetryTick}
-          disabled={ticking}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
-        >
-          <RefreshCw
-            className={`w-4 h-4 ${ticking ? "animate-spin" : ""}`}
-            aria-hidden="true"
-          />
-          <span>{ticking ? "Syncing Sensors..." : "Run Telemetry Tick"}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowRegisterForm((prev) => !prev)}
+            aria-expanded={showRegisterForm}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-semibold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg transition-colors whitespace-nowrap"
+          >
+            {showRegisterForm ? (
+              <X className="w-4 h-4 text-slate-600" aria-hidden="true" />
+            ) : (
+              <ServerCog className="w-4 h-4 text-blue-700" aria-hidden="true" />
+            )}
+            <span>{showRegisterForm ? "Close Form" : "Register Smart Bin"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSyncSensors}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            <span>{syncing ? "Syncing Sensors..." : "Sync Live Sensors"}</span>
+          </button>
+        </div>
       </div>
+
+      {showRegisterForm && (
+        <section
+          aria-labelledby="register-bin-heading"
+          className="bg-white border border-blue-200 rounded-xl p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 id="register-bin-heading" className="text-sm font-semibold text-slate-900">
+                Onboard ESP32 Smart Bin Node
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Register a new ward bin endpoint in Bhopal SQLite telemetry storage.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleRegisterBinSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+            <div>
+              <label htmlFor="new-bin-code" className="block text-xs font-medium text-slate-700 mb-1">
+                Bin Code
+              </label>
+              <input
+                id="new-bin-code"
+                type="text"
+                value={newBinCode}
+                onChange={(e) => setNewBinCode(e.target.value)}
+                placeholder="BIN-A04-Y"
+                required
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="new-bin-facility" className="block text-xs font-medium text-slate-700 mb-1">
+                Bhopal Hospital
+              </label>
+              <select
+                id="new-bin-facility"
+                value={newFacility}
+                onChange={(e) => setNewFacility(e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+              >
+                {data.facilities.map((fac) => (
+                  <option key={fac.code} value={fac.name}>
+                    {fac.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="new-bin-ward" className="block text-xs font-medium text-slate-700 mb-1">
+                Ward / Unit
+              </label>
+              <input
+                id="new-bin-ward"
+                type="text"
+                value={newWard}
+                onChange={(e) => setNewWard(e.target.value)}
+                placeholder="NICU Isolation Ward"
+                required
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="new-bin-category" className="block text-xs font-medium text-slate-700 mb-1">
+                CPCB Stream
+              </label>
+              <select
+                id="new-bin-category"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value as WasteCategoryKey)}
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900"
+              >
+                <option value="yellow">Yellow (Infectious)</option>
+                <option value="red">Red (Plastics)</option>
+                <option value="white">White (Sharps)</option>
+                <option value="blue">Blue (Glassware)</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label htmlFor="new-bin-cap" className="block text-xs font-medium text-slate-700 mb-1">
+                  Cap (kg)
+                </label>
+                <input
+                  id="new-bin-cap"
+                  type="number"
+                  min={5}
+                  max={100}
+                  value={newCapacityKg}
+                  onChange={(e) => setNewCapacityKg(e.target.value)}
+                  className="w-full px-2.5 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                />
+              </div>
+              <div>
+                <label htmlFor="new-bin-fill" className="block text-xs font-medium text-slate-700 mb-1">
+                  Fill %
+                </label>
+                <input
+                  id="new-bin-fill"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={newFillLevel}
+                  onChange={(e) => setNewFillLevel(e.target.value)}
+                  className="w-full px-2.5 py-2 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 font-mono"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={registering}
+              className="px-4 py-2 text-sm font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors whitespace-nowrap disabled:opacity-60"
+            >
+              {registering ? "Saving..." : "Add Bin Node"}
+            </button>
+          </form>
+        </section>
+      )}
 
       {errorMsg && (
         <div
@@ -431,12 +618,12 @@ export function IoTFleetView({ data, onDataUpdated }: IoTFleetViewProps) {
                           <button
                             type="button"
                             disabled={isBusy || bin.fill_level >= 100}
-                            onClick={() => handleSimulateDrop(bin.bin_code)}
-                            aria-label={`Simulate waste drop into ${bin.bin_code}`}
+                            onClick={() => handleLogIntake(bin.bin_code)}
+                            aria-label={`Log waste intake into ${bin.bin_code}`}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md disabled:opacity-50"
                           >
                             <Plus className="w-3 h-3" aria-hidden="true" />
-                            <span>+15%</span>
+                            <span>+15% Intake</span>
                           </button>
                           <button
                             type="button"

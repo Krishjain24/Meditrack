@@ -79,10 +79,29 @@ export async function classifyImageWithGemini(payload: {
   return parseJsonOrThrow(res);
 }
 
+export async function registerSmartBin(payload: {
+  bin_code: string;
+  facility_name: string;
+  ward: string;
+  category: WasteCategoryKey;
+  capacity_kg: number;
+  fill_level?: number;
+}): Promise<{ bin: SmartBin; dashboard: DashboardPayload }> {
+  const res = await fetch("/api/py/bins", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow(res);
+}
+
 export async function sendBinTelemetryAction(payload: {
-  action: "simulate_drop" | "toggle_lock" | "simulate_tick";
+  action: "record_reading" | "poll_sensors" | "toggle_lock" | "simulate_drop" | "simulate_tick";
   bin_code?: string;
   delta_fill?: number;
+  fill_level?: number;
+  weight_kg?: number;
+  gas_ppm?: number;
 }): Promise<{ dashboard: DashboardPayload }> {
   const res = await fetch("/api/py/bins/telemetry", {
     method: "POST",
@@ -149,4 +168,30 @@ export async function verifyManifestHash(manifest_id: string): Promise<{
     body: JSON.stringify({ manifest_id }),
   });
   return parseJsonOrThrow(res);
+}
+
+export async function fetchMapsConfig(): Promise<{ apiKey: string }> {
+  const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  if (envKey && envKey !== "MY_GOOGLE_MAPS_API_KEY") {
+    return { apiKey: envKey };
+  }
+  try {
+    const res = await fetch("/api/config/maps");
+    if (res.ok) {
+      const data = (await res.json()) as { apiKey?: string };
+      if (data.apiKey) return { apiKey: data.apiKey };
+    }
+  } catch {
+    // fallback to Python config endpoint on serverless deploys
+  }
+  try {
+    const res = await fetch("/api/py/config/maps");
+    if (res.ok) {
+      const data = (await res.json()) as { apiKey?: string };
+      return { apiKey: data.apiKey || "" };
+    }
+  } catch {
+    // ignore
+  }
+  return { apiKey: "" };
 }

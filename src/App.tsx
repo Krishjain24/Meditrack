@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchDashboard } from "./api/client";
+import { fetchDashboard, fetchMapsConfig } from "./api/client";
 import { ComplianceView } from "./components/ComplianceView";
 import { IoTFleetView } from "./components/IoTFleetView";
 import { OverviewView } from "./components/OverviewView";
@@ -31,6 +31,8 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [pickupModalOpen, setPickupModalOpen] = useState<boolean>(false);
+  const [mapsApiKey, setMapsApiKey] = useState<string>("");
+  const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState<boolean>(false);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -51,7 +53,16 @@ export default function App() {
 
   useEffect(() => {
     void loadDashboard();
+    void fetchMapsConfig().then((cfg) => {
+      if (cfg.apiKey) setMapsApiKey(cfg.apiKey);
+    });
   }, [loadDashboard]);
+
+  useEffect(() => {
+    const onQuotaExceeded = () => setMapsQuotaExceeded(true);
+    window.addEventListener("gmp-quota-exceeded", onQuotaExceeded);
+    return () => window.removeEventListener("gmp-quota-exceeded", onQuotaExceeded);
+  }, []);
 
   function handleSelectTab(tab: ActiveTab) {
     setActiveTab(tab);
@@ -62,6 +73,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
+      {mapsQuotaExceeded && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm">
+          <span>
+            Google Maps Platform quota reached. If you are the app owner, visit{" "}
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-semibold text-amber-950 hover:text-amber-800"
+            >
+              maps developer site
+            </a>{" "}
+            for instructions to update your account.
+          </span>
+        </div>
+      )}
       <TopBar
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
@@ -122,6 +149,7 @@ export default function App() {
             {activeTab === "routes" && (
               <RouteMapView
                 data={dashboard}
+                mapsApiKey={mapsApiKey}
                 onDataUpdated={(updated) => setDashboard(updated)}
               />
             )}
@@ -133,7 +161,7 @@ export default function App() {
       <footer className="border-t border-slate-200 bg-white py-5">
         <div className="max-w-[1360px] mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500">
           <span>
-          meditrack
+          created by -krish jain
           </span>
           <div className="flex items-center gap-4">
             <button

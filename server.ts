@@ -170,6 +170,15 @@ async function startServer(): Promise<void> {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
 
+  // Runtime Maps API key endpoint (reads from AI Studio injected env vars)
+  app.get("/api/config/maps", (_req: Request, res: Response) => {
+    const apiKey =
+      process.env.VITE_GOOGLE_MAPS_API_KEY ||
+      process.env.GOOGLE_MAPS_API_KEY ||
+      "";
+    res.json({ apiKey });
+  });
+
   // Proxy all /api/py/* traffic to Python 3.11 SQLite backend
   app.use("/api/py", async (req: Request, res: Response) => {
     try {
@@ -177,7 +186,7 @@ async function startServer(): Promise<void> {
       proxyToPython(req, res);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Python backend proxy error";
-      res.status(502).json({ error: msg });
+      res.status(502).json({ error: err instanceof Error ? err.message : "Python backend proxy error" });
     }
   });
 
