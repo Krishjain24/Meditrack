@@ -170,16 +170,26 @@ export async function verifyManifestHash(manifest_id: string): Promise<{
   return parseJsonOrThrow(res);
 }
 
-export async function fetchMapsConfig(): Promise<{ apiKey: string }> {
-  const envKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  if (envKey && envKey !== "MY_GOOGLE_MAPS_API_KEY") {
-    return { apiKey: envKey };
+export async function fetchMapsConfig(): Promise<{ apiKey: string; mapboxToken: string }> {
+  const envGoogleKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+  const envMapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+  const initialGoogle =
+    envGoogleKey && envGoogleKey !== "MY_GOOGLE_MAPS_API_KEY" ? envGoogleKey : "";
+  const initialMapbox =
+    envMapboxToken && envMapboxToken !== "MY_MAPBOX_ACCESS_TOKEN" ? envMapboxToken : "";
+
+  if (initialGoogle && initialMapbox) {
+    return { apiKey: initialGoogle, mapboxToken: initialMapbox };
   }
+
   try {
     const res = await fetch("/api/config/maps");
     if (res.ok) {
-      const data = (await res.json()) as { apiKey?: string };
-      if (data.apiKey) return { apiKey: data.apiKey };
+      const data = (await res.json()) as { apiKey?: string; mapboxToken?: string };
+      return {
+        apiKey: initialGoogle || data.apiKey || "",
+        mapboxToken: initialMapbox || data.mapboxToken || "",
+      };
     }
   } catch {
     // fallback to Python config endpoint on serverless deploys
@@ -187,11 +197,56 @@ export async function fetchMapsConfig(): Promise<{ apiKey: string }> {
   try {
     const res = await fetch("/api/py/config/maps");
     if (res.ok) {
-      const data = (await res.json()) as { apiKey?: string };
-      return { apiKey: data.apiKey || "" };
+      const data = (await res.json()) as { apiKey?: string; mapboxToken?: string };
+      return {
+        apiKey: initialGoogle || data.apiKey || "",
+        mapboxToken: initialMapbox || data.mapboxToken || "",
+      };
     }
   } catch {
     // ignore
   }
-  return { apiKey: "" };
+  return { apiKey: initialGoogle, mapboxToken: initialMapbox };
 }
+
+export interface MapboxPlaceResult {
+  id: string;
+  name: string;
+  locality: string;
+  address: string;
+  lat: number;
+  lng: number;
+  category?: string | null;
+}
+
+export async function searchBhopalMapboxPlaces(
+  query: string
+): Promise<{ places: MapboxPlaceResult[] }> {
+  const res = await fetch(`/api/py/mapbox/search?q=${encodeURIComponent(query)}`);
+  return parseJsonOrThrow<{ places: MapboxPlaceResult[] }>(res);
+}
+
+export interface MapboxDirectionsResult {
+  distanceKm: number;
+  durationMin: number;
+  geometry: {
+    type: "LineString";
+    coordinates: Array<[number, number]>;
+  };
+  steps: Array<{
+    instruction: string;
+    distanceText: string;
+  }>;
+}
+
+export async function fetchMapboxDirections(
+  coordinates: Array<{ lat: number; lng: number }>
+): Promise<MapboxDirectionsResult> {
+  const res = await fetch("/api/py/mapbox/directions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ coordinates }),
+  });
+  return parseJsonOrThrow<MapboxDirectionsResult>(res);
+}
+

@@ -366,3 +366,74 @@ export function isMapsQuotaError(err: unknown): boolean {
   );
 }
 
+export interface BhopalMapPlace {
+  id: string;
+  name: string;
+  locality: string;
+  address: string;
+  lat: number;
+  lng: number;
+  rating?: number | null;
+  userRatingCount?: number | null;
+  googleMapsURI?: string | null;
+}
+
+export function buildSeedBhopalHospitalPlaces(
+  facilities: Array<{ name: string; code: string; lat: number; lng: number; zone: string }>
+): BhopalMapPlace[] {
+  return facilities.map((f) => ({
+    id: f.code,
+    name: f.name,
+    locality: f.zone.split(",")[0].trim() || "Bhopal",
+    address: `${f.zone}, Bhopal, Madhya Pradesh, India`,
+    lat: f.lat,
+    lng: f.lng,
+  }));
+}
+
+export interface MapboxFeatureLike {
+  id?: string;
+  text?: string;
+  place_name?: string;
+  center?: [number, number];
+  context?: Array<{ id?: string; text?: string }>;
+}
+
+export function parseMapboxPlaceFeatures(
+  features: MapboxFeatureLike[]
+): BhopalMapPlace[] {
+  const out: BhopalMapPlace[] = [];
+  for (const feat of features) {
+    if (!feat.center || feat.center.length < 2) continue;
+    const [lng, lat] = feat.center;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const address = (feat.place_name || "Bhopal, Madhya Pradesh, India").trim();
+    let locality = "Bhopal";
+    for (const ctx of feat.context || []) {
+      const id = ctx.id || "";
+      const txt = (ctx.text || "").trim();
+      if (
+        (id.startsWith("neighborhood.") || id.startsWith("locality.") || id.startsWith("district.")) &&
+        txt &&
+        txt.toLowerCase() !== "bhopal"
+      ) {
+        locality = txt;
+        break;
+      }
+    }
+    if (locality === "Bhopal") {
+      locality = extractBhopalLocality(null, address);
+    }
+    out.push({
+      id: feat.id || `mb-${lat.toFixed(5)}-${lng.toFixed(5)}`,
+      name: (feat.text || address).trim(),
+      locality,
+      address,
+      lat,
+      lng,
+    });
+  }
+  return out;
+}
+
+

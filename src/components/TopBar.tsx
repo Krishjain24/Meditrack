@@ -22,13 +22,21 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-30 bg-white border-b border-slate-200">
       <div className="max-w-[1360px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-8">
-        {/* Zone 1: Single-line brand wordmark */}
+        {/* Zone 1: Brand logo mark + single-line wordmark */}
         <button
           type="button"
           onClick={() => onSelectTab("overview")}
-          className="text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
+          className="inline-flex items-center gap-2.5 text-xl font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700"
         >
-          MediTrack
+          <img
+            src="/src/assets/images/meditrack_logo_1795630286027.jpg"
+            alt="MediTrack logo"
+            width={34}
+            height={34}
+            referrerPolicy="no-referrer"
+            className="w-8 h-8 rounded-lg object-contain bg-white border border-slate-200/80"
+          />
+          <span>MediTrack</span>
         </button>
 
         {/* Zone 2: 5 concise single-line navigation links */}

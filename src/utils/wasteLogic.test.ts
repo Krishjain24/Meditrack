@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildSeedBhopalHospitalPlaces,
   computeBinForecasts,
   extractBhopalLocality,
   filterBins,
@@ -11,6 +12,7 @@ import {
   getCategoryMeta,
   getComplianceStatusDisplay,
   isMapsQuotaError,
+  parseMapboxPlaceFeatures,
   projectLatLngToSvg,
 } from "./wasteLogic";
 import type { DisposalManifest, SmartBin } from "../types/meditrack";
@@ -132,3 +134,35 @@ test("extractBhopalLocality, compliance display, and quota error helpers", () =>
   assert.equal(isMapsQuotaError(new Error("RESOURCE_EXHAUSTED 429")), true);
   assert.equal(isMapsQuotaError(new Error("ZERO_RESULTS")), false);
 });
+
+test("parseMapboxPlaceFeatures and buildSeedBhopalHospitalPlaces normalize Bhopal places", () => {
+  const parsed = parseMapboxPlaceFeatures([
+    {
+      id: "poi.123",
+      text: "AIIMS Bhopal",
+      place_name: "AIIMS Bhopal, Saket Nagar, Bhopal, Madhya Pradesh 462020, India",
+      center: [77.4574, 23.2106],
+      context: [
+        { id: "neighborhood.1", text: "Saket Nagar" },
+        { id: "place.2", text: "Bhopal" },
+      ],
+    },
+  ]);
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0].locality, "Saket Nagar");
+  assert.equal(parsed[0].lat, 23.2106);
+  assert.equal(parsed[0].lng, 77.4574);
+
+  const seeded = buildSeedBhopalHospitalPlaces([
+    {
+      name: "Bansal Hospital Bhopal",
+      code: "FAC-03",
+      lat: 23.2031,
+      lng: 77.4229,
+      zone: "Sector C, Shahpura",
+    },
+  ]);
+  assert.equal(seeded[0].id, "FAC-03");
+  assert.equal(seeded[0].locality, "Sector C");
+});
+

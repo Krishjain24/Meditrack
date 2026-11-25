@@ -134,6 +134,54 @@ class MediTrackPythonTests(unittest.TestCase):
         finally:
             conn2.close()
 
+    def test_mapbox_parsers(self) -> None:
+        features = [
+            {
+                "id": "poi.1001",
+                "text": "Hamidia Hospital",
+                "place_name": "Hamidia Hospital, Royal Market, Bhopal, Madhya Pradesh 462001, India",
+                "center": [77.402, 23.2585],
+                "context": [
+                    {"id": "neighborhood.10", "text": "Royal Market"},
+                    {"id": "place.20", "text": "Bhopal"},
+                ],
+                "properties": {"category": "hospital"},
+            }
+        ]
+        parsed = meditrack_app.parse_mapbox_geocode_features(features)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["locality"], "Royal Market")
+        self.assertEqual(parsed[0]["lat"], 23.2585)
+        self.assertEqual(parsed[0]["lng"], 77.402)
+
+        directions = meditrack_app.normalize_mapbox_directions(
+            {
+                "routes": [
+                    {
+                        "distance": 12450,
+                        "duration": 1620,
+                        "geometry": {
+                            "type": "LineString",
+                            "coordinates": [[77.4574, 23.2106], [77.402, 23.2585]],
+                        },
+                        "legs": [
+                            {
+                                "steps": [
+                                    {
+                                        "distance": 1450,
+                                        "maneuver": {"instruction": "Head north toward Link Road"},
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+        self.assertEqual(directions["distanceKm"], 12.4)
+        self.assertEqual(directions["durationMin"], 27)
+        self.assertEqual(directions["steps"][0]["distanceText"], "1.4 km")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,10 +29,12 @@ import {
   getCategoryMeta,
   isMapsQuotaError,
 } from "../utils/wasteLogic";
+import { BhopalMapboxView } from "./BhopalMapboxView";
 
 interface RouteMapViewProps {
   data: DashboardPayload;
   mapsApiKey: string;
+  mapboxToken: string;
   onDataUpdated: (dashboard: DashboardPayload) => void;
 }
 
@@ -917,7 +919,12 @@ function BhopalLiveMapInner({
   );
 }
 
-export function RouteMapView({ data, mapsApiKey, onDataUpdated }: RouteMapViewProps) {
+export function RouteMapView({
+  data,
+  mapsApiKey,
+  mapboxToken,
+  onDataUpdated,
+}: RouteMapViewProps) {
   const [selectedVehicle, setSelectedVehicle] = useState<string>("");
   const [routePlan, setRoutePlan] = useState<RoutePlan | null>(null);
   const [optimizing, setOptimizing] = useState(false);
@@ -925,9 +932,22 @@ export function RouteMapView({ data, mapsApiKey, onDataUpdated }: RouteMapViewPr
   const [lastMintMsg, setLastMintMsg] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
+  const [mapProvider, setMapProvider] = useState<"mapbox" | "google">(() =>
+    mapboxToken ? "mapbox" : mapsApiKey ? "google" : "mapbox"
+  );
+  const [userPickedProvider, setUserPickedProvider] = useState(false);
   const [bhopalHospitals, setBhopalHospitals] = useState<BhopalHospitalPlace[]>([]);
   const [selectedLocality, setSelectedLocality] = useState<string>("ALL");
   const [routeStopIds, setRouteStopIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (userPickedProvider) return;
+    if (mapboxToken) {
+      setMapProvider("mapbox");
+    } else if (mapsApiKey) {
+      setMapProvider("google");
+    }
+  }, [mapboxToken, mapsApiKey, userPickedProvider]);
 
   const handleHospitalsMerged = useCallback((incoming: BhopalHospitalPlace[]) => {
     setBhopalHospitals((prev) => {
@@ -1013,8 +1033,8 @@ export function RouteMapView({ data, mapsApiKey, onDataUpdated }: RouteMapViewPr
             Bhopal Real-Time Fleet Map &amp; Route Optimization
           </h1>
           <p className="text-sm text-slate-600 mt-1">
-            Live Google Maps view of Bhopal hospitals and localities paired with MediTrack&apos;s
-            condition-based collection dispatch queue.
+            Live Mapbox GL &amp; Google Maps view of Bhopal hospitals and localities paired with
+            MediTrack&apos;s condition-based collection dispatch queue.
           </p>
         </div>
 
@@ -1065,23 +1085,75 @@ export function RouteMapView({ data, mapsApiKey, onDataUpdated }: RouteMapViewPr
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left: Live Google Maps Bhopal Hospital & Locality Dispatch Map */}
+        {/* Left: Live Bhopal Hospital & Locality Dispatch Map (Mapbox GL / Google Maps) */}
         <section className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold text-slate-900">
                 Bhopal Hospitals &amp; Localities Live Map
               </h2>
               <p className="text-xs text-slate-500">
-                Bhopal, Madhya Pradesh · Filter by locality, inspect hospital pins, and compute road routes
+                Bhopal, Madhya Pradesh · {mapProvider === "mapbox" ? "Mapbox GL, Geocoding & Directions API" : "Google Maps Places & Routes API"}
               </p>
             </div>
-            <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
-              {bhopalHospitals.length} Bhopal hospitals
-            </span>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <div
+                role="group"
+                aria-label="Map provider"
+                className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserPickedProvider(true);
+                    setMapProvider("mapbox");
+                  }}
+                  aria-pressed={mapProvider === "mapbox"}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    mapProvider === "mapbox"
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Mapbox API
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserPickedProvider(true);
+                    setMapProvider("google");
+                  }}
+                  aria-pressed={mapProvider === "google"}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    mapProvider === "google"
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  Google Maps
+                </button>
+              </div>
+              {mapProvider === "google" && (
+                <span className="text-xs font-mono text-slate-500 whitespace-nowrap">
+                  {bhopalHospitals.length} hospitals
+                </span>
+              )}
+            </div>
           </div>
 
-          {!mapsApiKey ? (
+          {mapProvider === "mapbox" ? (
+            <BhopalMapboxView
+              mapboxToken={mapboxToken}
+              facilities={data.facilities}
+              treatmentPlant={data.treatment_plant}
+              vehicles={data.vehicles}
+              routeStopIds={routeStopIds}
+              onToggleRouteStop={handleToggleRouteStop}
+              onClearRouteStops={() => setRouteStopIds([])}
+              onSetRouteStops={setRouteStopIds}
+            />
+          ) : !mapsApiKey ? (
             <div
               className="h-[480px] rounded-xl border border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center p-6 text-center"
               data-testid="maps-key-missing"
@@ -1092,7 +1164,7 @@ export function RouteMapView({ data, mapsApiKey, onDataUpdated }: RouteMapViewPr
               </p>
               <p className="mt-1 text-xs text-slate-500 max-w-sm">
                 Configure GOOGLE_MAPS_API_KEY or VITE_GOOGLE_MAPS_API_KEY in your environment to
-                load the interactive Bhopal hospital and locality map.
+                load the Google Maps view, or switch to Mapbox API.
               </p>
             </div>
           ) : (

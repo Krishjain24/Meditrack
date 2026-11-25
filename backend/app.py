@@ -22,7 +22,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, quote, urlparse
+from urllib.request import Request as UrlRequest, urlopen
 
 DEFAULT_DB_PATH = (
     "/tmp/meditrack.db"
@@ -152,6 +154,85 @@ CBWTF_PLANT = {
     "lat": 23.2640,
     "lng": 77.4475,
 }
+
+BHOPAL_CENTER = {"lat": 23.2599, "lng": 77.4126}
+BHOPAL_BBOX = "77.30,23.14,77.56,23.36"
+
+
+def get_mapbox_token() -> str:
+    return (
+        os.environ.get("VITE_MAPBOX_ACCESS_TOKEN")
+        or os.environ.get("MAPBOX_ACCESS_TOKEN")
+        or os.environ.get("VITE_MAPBOX_TOKEN")
+        or os.environ.get("MAPBOX_TOKEN")
+        or ""
+    ).strip()
+
+
+def parse_mapbox_geocode_features(features: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    places: list[dict[str, Any]] = []
+    for feat in features or []:
+        coords = feat.get("center") or (feat.get("geometry") or {}).get("coordinates") or []
+        if len(coords) < 2:
+            continue
+        lng = float(coords[0])
+        lat = float(coords[1])
+        name = str(feat.get("text") or feat.get("place_name") or "Bhopal Healthcare Facility").strip()
+        address = str(feat.get("place_name") or "Bhopal, Madhya Pradesh, India").strip()
+
+        locality = "Bhopal"
+        for ctx in feat.get("context") or []:
+            ctx_id = str(ctx.get("id") or "")
+            ctx_text = str(ctx.get("text") or "").strip()
+            if ctx_id.startswith(("neighborhood.", "locality.", "district.")) and ctx_text and ctx_text.lower() != "bhopal":
+                locality = ctx_text
+                break
+        if locality == "Bhopal" and "," in address:
+            parts = [p.strip() for p in address.split(",") if p.strip()]
+            for part in parts[1:]:
+                low = part.lower()
+                if "bhopal" not in low and "madhya pradesh" not in low and low != "india" and not part.isdigit():
+                    locality = part
+                    break
+
+        props = feat.get("properties") or {}
+        places.append(
+            {
+                "id": str(feat.get("id") or f"mb-{lat:.5f}-{lng:.5f}"),
+                "name": name,
+                "locality": locality,
+                "address": address,
+                "lat": lat,
+                "lng": lng,
+                "category": str(props.get("category") or "").strip() or None,
+            }
+        )
+    return places
+
+
+def normalize_mapbox_directions(payload: dict[str, Any]) -> dict[str, Any]:
+    routes = payload.get("routes") or []
+    if not routes:
+        return {"routes": [], "distanceKm": 0.0, "durationMin": 0, "geometry": None, "steps": []}
+    primary = routes[0]
+    distance_km = round(float(primary.get("distance", 0.0)) / 1000.0, 1)
+    duration_min = max(1, round(float(primary.get("duration", 0.0)) / 60.0))
+    steps: list[dict[str, str]] = []
+    for leg in primary.get("legs") or []:
+        for step in leg.get("steps") or []:
+            maneuver = step.get("maneuver") or {}
+            instr = str(maneuver.get("instruction") or "").strip()
+            if not instr:
+                continue
+            meters = float(step.get("distance", 0.0))
+            dist_text = f"{meters / 1000.0:.1f} km" if meters >= 1000 else f"{int(round(meters))} m"
+            steps.append({"instruction": instr, "distanceText": dist_text})
+    return {
+        "distanceKm": distance_km,
+        "durationMin": duration_min,
+        "geometry": primary.get("geometry"),
+        "steps": steps[:10],
+    }
 
 
 def utc_now_iso() -> str:
@@ -1214,7 +1295,40 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                             or os.environ.get("GOOGLE_MAPS_API_KEY")
                             or ""
                         )
-                        self._send_json(200, {"apiKey": api_key})
+                        self._send_json(
+                            200,
+                            {
+                                "apiKey": api_key,
+                                "mapboxToken": get_mapbox_token(),
+                            },
+                        )
+                    elif path == "/api/py/mapbox/search":
+                        token = get_mapbox_token()
+                        if not token:
+                            self._send_json(
+                                503,
+                                {"error": "MAPBOX_ACCESS_TOKEN is not configured in environment."},
+                            )
+                            return
+                        query_text = str(qs.get("q", ["hospital Bhopal"])[0]).strip() or "hospital Bhopal"
+                        encoded_q = quote(query_text)
+                        mb_url = (
+                            f"https://api.mapbox.com/geocoding/v5/mapbox.places/{encoded_q}.json"
+                            f"?proximity={BHOPAL_CENTER['lng']},{BHOPAL_CENTER['lat']}"
+                            f"&bbox={BHOPAL_BBOX}&country=IN&limit=10"
+                            f"&types=poi,locality,neighborhood,place,address"
+                            f"&access_token={quote(token)}"
+                        )
+                        try:
+                            with urlopen(UrlRequest(mb_url, headers={"User-Agent": "MediTrack-Bhopal/1.0"}), timeout=10) as resp:
+                                mb_payload = json.loads(resp.read().decode("utf-8"))
+                            places = parse_mapbox_geocode_features(mb_payload.get("features") or [])
+                            self._send_json(200, {"places": places})
+                        except HTTPError as exc:
+                            err_body = exc.read().decode("utf-8", errors="ignore")
+                            self._send_json(exc.code, {"error": f"Mapbox Geocoding error: {err_body[:240]}"})
+                        except URLError as exc:
+                            self._send_json(502, {"error": f"Mapbox Geocoding unreachable: {exc.reason}"})
                     else:
                         self._send_json(404, {"error": f"Unknown endpoint: {path}"})
                 finally:
@@ -1546,6 +1660,41 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                                 "qr_payload": row["qr_payload"],
                             },
                         )
+                    elif path == "/api/py/mapbox/directions":
+                        token = get_mapbox_token()
+                        if not token:
+                            self._send_json(
+                                503,
+                                {"error": "MAPBOX_ACCESS_TOKEN is not configured in environment."},
+                            )
+                            return
+                        coords = body.get("coordinates") or []
+                        if not isinstance(coords, list) or len(coords) < 2:
+                            self._send_json(400, {"error": "Provide at least 2 coordinates for Mapbox Directions."})
+                            return
+                        coord_str = ";".join(
+                            f"{float(pt['lng'])},{float(pt['lat'])}"
+                            for pt in coords[:25]
+                            if isinstance(pt, dict) and "lat" in pt and "lng" in pt
+                        )
+                        mb_dir_url = (
+                            f"https://api.mapbox.com/directions/v5/mapbox/driving/{coord_str}"
+                            f"?geometries=geojson&overview=full&steps=true&language=en"
+                            f"&access_token={quote(token)}"
+                        )
+                        try:
+                            with urlopen(UrlRequest(mb_dir_url, headers={"User-Agent": "MediTrack-Bhopal/1.0"}), timeout=12) as resp:
+                                dir_payload = json.loads(resp.read().decode("utf-8"))
+                            normalized = normalize_mapbox_directions(dir_payload)
+                            if not normalized.get("geometry"):
+                                self._send_json(404, {"error": "No Mapbox driving route found for the selected stops."})
+                                return
+                            self._send_json(200, normalized)
+                        except HTTPError as exc:
+                            err_body = exc.read().decode("utf-8", errors="ignore")
+                            self._send_json(exc.code, {"error": f"Mapbox Directions error: {err_body[:240]}"})
+                        except URLError as exc:
+                            self._send_json(502, {"error": f"Mapbox Directions unreachable: {exc.reason}"})
                     else:
                         self._send_json(404, {"error": f"Unknown endpoint: {path}"})
                 finally:

@@ -32,6 +32,7 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [pickupModalOpen, setPickupModalOpen] = useState<boolean>(false);
   const [mapsApiKey, setMapsApiKey] = useState<string>("");
+  const [mapboxToken, setMapboxToken] = useState<string>("");
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState<boolean>(false);
 
   const loadDashboard = useCallback(async () => {
@@ -55,6 +56,7 @@ export default function App() {
     void loadDashboard();
     void fetchMapsConfig().then((cfg) => {
       if (cfg.apiKey) setMapsApiKey(cfg.apiKey);
+      if (cfg.mapboxToken) setMapboxToken(cfg.mapboxToken);
     });
   }, [loadDashboard]);
 
@@ -150,6 +152,7 @@ export default function App() {
               <RouteMapView
                 data={dashboard}
                 mapsApiKey={mapsApiKey}
+                mapboxToken={mapboxToken}
                 onDataUpdated={(updated) => setDashboard(updated)}
               />
             )}

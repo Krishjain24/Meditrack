@@ -176,7 +176,13 @@ async function startServer(): Promise<void> {
       process.env.VITE_GOOGLE_MAPS_API_KEY ||
       process.env.GOOGLE_MAPS_API_KEY ||
       "";
-    res.json({ apiKey });
+    const mapboxToken =
+      process.env.VITE_MAPBOX_ACCESS_TOKEN ||
+      process.env.MAPBOX_ACCESS_TOKEN ||
+      process.env.VITE_MAPBOX_TOKEN ||
+      process.env.MAPBOX_TOKEN ||
+      "";
+    res.json({ apiKey, mapboxToken });
   });
 
   // Proxy all /api/py/* traffic to Python 3.11 SQLite backend
