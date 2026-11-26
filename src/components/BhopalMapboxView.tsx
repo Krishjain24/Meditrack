@@ -20,6 +20,12 @@ import {
   type BhopalMapPlace,
 } from "../utils/wasteLogic";
 
+interface DispatchRouteRequest {
+  id: number;
+  coordinates: Array<{ lat: number; lng: number }>;
+  stopCount: number;
+}
+
 interface BhopalMapboxViewProps {
   mapboxToken: string;
   facilities: DashboardPayload["facilities"];
@@ -29,6 +35,7 @@ interface BhopalMapboxViewProps {
   onToggleRouteStop: (id: string) => void;
   onClearRouteStops: () => void;
   onSetRouteStops: (ids: string[]) => void;
+  dispatchRouteRequest?: DispatchRouteRequest | null;
 }
 
 const BHOPAL_CENTER: [number, number] = [77.4126, 23.2599];
@@ -172,11 +179,13 @@ export function BhopalMapboxView({
   onToggleRouteStop,
   onClearRouteStops,
   onSetRouteStops,
+  dispatchRouteRequest,
 }: BhopalMapboxViewProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
   const initialFetchedRef = useRef(false);
+  const appliedStyleIdRef = useRef<string>("streets");
 
   const [styleId, setStyleId] = useState<string>("streets");
   const [hospitals, setHospitals] = useState<BhopalMapPlace[]>(() =>
@@ -193,6 +202,10 @@ export function BhopalMapboxView({
   const [roadRoute, setRoadRoute] = useState<
     (MapboxDirectionsResult & { orderedStopIds: string[] }) | null
   >(null);
+  const roadRouteRef = useRef<
+    (MapboxDirectionsResult & { orderedStopIds: string[] }) | null
+  >(null);
+  roadRouteRef.current = roadRoute;
 
   const mergeHospitals = useCallback((incoming: BhopalMapPlace[]) => {
     setHospitals((prev) => {
@@ -296,41 +309,68 @@ export function BhopalMapboxView({
   }, [hospitals, searchInput, selectedLocality]);
 
   const drawRouteOnMap = useCallback(
-    (map: mapboxgl.Map, route: (MapboxDirectionsResult & { orderedStopIds: string[] }) | null) => {
-      if (!map.isStyleLoaded()) return;
+    (
+      map: mapboxgl.Map,
+      route: (MapboxDirectionsResult & { orderedStopIds: string[] }) | null
+    ): boolean => {
       const sourceId = "bhopal-collection-route";
+      const casingLayerId = "bhopal-collection-route-casing";
       const layerId = "bhopal-collection-route-line";
 
-      if (map.getLayer(layerId)) {
-        map.removeLayer(layerId);
-      }
-      if (map.getSource(sourceId)) {
-        map.removeSource(sourceId);
-      }
-      if (!route?.geometry) return;
+      try {
+        if (!map.getStyle()) return false;
 
-      map.addSource(sourceId, {
-        type: "geojson",
-        data: {
-          type: "Feature",
-          properties: {},
-          geometry: route.geometry,
-        },
-      });
-      map.addLayer({
-        id: layerId,
-        type: "line",
-        source: sourceId,
-        layout: {
-          "line-join": "round",
-          "line-cap": "round",
-        },
-        paint: {
-          "line-color": "#1d4ed8",
-          "line-width": 5,
-          "line-opacity": 0.9,
-        },
-      });
+        if (map.getLayer(layerId)) {
+          map.removeLayer(layerId);
+        }
+        if (map.getLayer(casingLayerId)) {
+          map.removeLayer(casingLayerId);
+        }
+        if (map.getSource(sourceId)) {
+          map.removeSource(sourceId);
+        }
+        if (!route?.geometry) return true;
+
+        map.addSource(sourceId, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: route.geometry,
+          },
+        });
+        map.addLayer({
+          id: casingLayerId,
+          type: "line",
+          source: sourceId,
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": "#ffffff",
+            "line-width": 8,
+            "line-opacity": 0.9,
+          },
+        });
+        map.addLayer({
+          id: layerId,
+          type: "line",
+          source: sourceId,
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": "#1d4ed8",
+            "line-width": 5,
+            "line-opacity": 0.95,
+          },
+        });
+        return true;
+      } catch {
+        return false;
+      }
     },
     []
   );
@@ -343,6 +383,7 @@ export function BhopalMapboxView({
     mapboxgl.accessToken = mapboxToken;
     const styleObj =
       MAPBOX_STYLES.find((s) => s.id === styleId) ?? MAPBOX_STYLES[0];
+    appliedStyleIdRef.current = styleObj.id;
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
@@ -358,7 +399,7 @@ export function BhopalMapboxView({
     mapRef.current = map;
 
     map.on("error", (ev) => {
-      const msg = String(ev?.error?.message || "");
+      const msg = String(ev?.error?.message || "").replace(/^:\s*/, "");
       if (
         msg.includes("events.mapbox") ||
         msg.includes("ERR_BLOCKED_BY_CLIENT") ||
@@ -370,7 +411,20 @@ export function BhopalMapboxView({
     });
 
     map.on("load", () => {
-      drawRouteOnMap(map, roadRoute);
+      drawRouteOnMap(map, roadRouteRef.current);
+    });
+
+    map.on("style.load", () => {
+      drawRouteOnMap(map, roadRouteRef.current);
+    });
+
+    map.on("styledata", () => {
+      if (
+        roadRouteRef.current?.geometry &&
+        !map.getLayer("bhopal-collection-route-line")
+      ) {
+        drawRouteOnMap(map, roadRouteRef.current);
+      }
     });
 
     return () => {
@@ -385,28 +439,37 @@ export function BhopalMapboxView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapboxToken]);
 
-  // Switch Mapbox style cleanly and preserve GeoJSON route layer
+  // Switch Mapbox style ONLY when user selects a different style
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    if (appliedStyleIdRef.current === styleId) return;
+    appliedStyleIdRef.current = styleId;
     const styleObj =
       MAPBOX_STYLES.find((s) => s.id === styleId) ?? MAPBOX_STYLES[0];
     map.setStyle(styleObj.url);
     const onStyleLoad = () => {
-      drawRouteOnMap(map, roadRoute);
+      drawRouteOnMap(map, roadRouteRef.current);
     };
     map.once("style.load", onStyleLoad);
     return () => {
       map.off("style.load", onStyleLoad);
     };
-  }, [drawRouteOnMap, roadRoute, styleId]);
+  }, [drawRouteOnMap, styleId]);
 
-  // Sync GeoJSON route polyline when roadRoute updates
+  // Sync GeoJSON route polyline whenever roadRoute updates
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (map.isStyleLoaded()) {
-      drawRouteOnMap(map, roadRoute);
+    const drew = drawRouteOnMap(map, roadRoute);
+    if (!drew) {
+      const onReady = () => {
+        drawRouteOnMap(map, roadRouteRef.current);
+      };
+      map.once("style.load", onReady);
+      return () => {
+        map.off("style.load", onReady);
+      };
     }
   }, [drawRouteOnMap, roadRoute]);
 
@@ -523,6 +586,56 @@ export function BhopalMapboxView({
     },
     [hospitals]
   );
+
+  // Automatically plot the dispatched vehicle route on Mapbox when "Optimize Dispatch Queue" is triggered
+  useEffect(() => {
+    if (!dispatchRouteRequest || dispatchRouteRequest.coordinates.length < 2) {
+      return;
+    }
+    let cancelled = false;
+    setComputingRoute(true);
+    setRouteError("");
+    void fetchMapboxDirections(dispatchRouteRequest.coordinates)
+      .then((res) => {
+        if (cancelled) return;
+        const placeholderIds = Array.from(
+          { length: dispatchRouteRequest.stopCount },
+          (_, i) => `dispatch-${i + 1}`
+        );
+        setRoadRoute({ ...res, orderedStopIds: placeholderIds });
+        const map = mapRef.current;
+        if (map && res.geometry.coordinates.length > 1) {
+          const bounds = new mapboxgl.LngLatBounds();
+          for (const coord of res.geometry.coordinates) {
+            bounds.extend(coord);
+          }
+          map.fitBounds(bounds, { padding: 48, duration: 700 });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Fallback to direct waypoint segments so the dispatched path still appears on map
+        const fallbackCoords: Array<[number, number]> =
+          dispatchRouteRequest.coordinates.map((pt) => [pt.lng, pt.lat]);
+        setRoadRoute({
+          distanceKm: 0,
+          durationMin: 0,
+          geometry: { type: "LineString", coordinates: fallbackCoords },
+          steps: [],
+          orderedStopIds: Array.from(
+            { length: dispatchRouteRequest.stopCount },
+            (_, i) => `dispatch-${i + 1}`
+          ),
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setComputingRoute(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatchRouteRequest]);
 
   const handleLocalitySearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

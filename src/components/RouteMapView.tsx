@@ -939,6 +939,11 @@ export function RouteMapView({
   const [bhopalHospitals, setBhopalHospitals] = useState<BhopalHospitalPlace[]>([]);
   const [selectedLocality, setSelectedLocality] = useState<string>("ALL");
   const [routeStopIds, setRouteStopIds] = useState<string[]>([]);
+  const [dispatchRouteRequest, setDispatchRouteRequest] = useState<{
+    id: number;
+    coordinates: Array<{ lat: number; lng: number }>;
+    stopCount: number;
+  } | null>(null);
 
   useEffect(() => {
     if (userPickedProvider) return;
@@ -991,6 +996,37 @@ export function RouteMapView({
       const res = await optimizeRoutes(selectedVehicle || undefined);
       setRoutePlan(res.plan);
       onDataUpdated(res.dashboard);
+
+      if (res.plan.stops && res.plan.stops.length > 0) {
+        const assignedVeh = res.dashboard.vehicles.find(
+          (v) => v.vehicle_code === res.plan.vehicle_code
+        );
+        const coords: Array<{ lat: number; lng: number }> = [];
+        if (assignedVeh) {
+          coords.push({ lat: assignedVeh.lat, lng: assignedVeh.lng });
+        }
+        for (const s of res.plan.stops) {
+          const prev = coords[coords.length - 1];
+          if (
+            !prev ||
+            Math.abs(prev.lat - s.lat) > 0.0001 ||
+            Math.abs(prev.lng - s.lng) > 0.0001
+          ) {
+            coords.push({ lat: s.lat, lng: s.lng });
+          }
+        }
+        coords.push({
+          lat: res.dashboard.treatment_plant.lat,
+          lng: res.dashboard.treatment_plant.lng,
+        });
+        if (coords.length >= 2) {
+          setDispatchRouteRequest({
+            id: Date.now(),
+            coordinates: coords,
+            stopCount: res.plan.stops.length,
+          });
+        }
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Route optimization failed");
     } finally {
@@ -1152,6 +1188,7 @@ export function RouteMapView({
               onToggleRouteStop={handleToggleRouteStop}
               onClearRouteStops={() => setRouteStopIds([])}
               onSetRouteStops={setRouteStopIds}
+              dispatchRouteRequest={dispatchRouteRequest}
             />
           ) : !mapsApiKey ? (
             <div
