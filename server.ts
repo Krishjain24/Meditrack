@@ -185,6 +185,144 @@ async function startServer(): Promise<void> {
     res.json({ apiKey, mapboxToken });
   });
 
+  // Server-side Mapbox Geocoding & Directions proxies (prevents browser client/CORS blocks)
+  app.get("/api/mapbox/search", async (req: Request, res: Response) => {
+    const token =
+      process.env.VITE_MAPBOX_ACCESS_TOKEN ||
+      process.env.MAPBOX_ACCESS_TOKEN ||
+      process.env.VITE_MAPBOX_TOKEN ||
+      process.env.MAPBOX_TOKEN ||
+      "";
+    if (!token) {
+      res.status(503).json({ error: "MAPBOX_ACCESS_TOKEN is not configured in environment." });
+      return;
+    }
+    const q = String(req.query.q || "hospital Bhopal").trim() || "hospital Bhopal";
+    const url =
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json` +
+      `?proximity=77.4126,23.2599&bbox=77.30,23.14,77.56,23.36&country=IN&limit=10` +
+      `&types=poi,locality,neighborhood,place,address&access_token=${encodeURIComponent(token)}`;
+    try {
+      const upstream = await fetch(url);
+      const data = (await upstream.json()) as {
+        features?: Array<{
+          id?: string;
+          text?: string;
+          place_name?: string;
+          center?: [number, number];
+          context?: Array<{ id?: string; text?: string }>;
+          properties?: { category?: string };
+        }>;
+        message?: string;
+      };
+      if (!upstream.ok) {
+        res.status(upstream.status).json({ error: data.message || "Mapbox Geocoding error" });
+        return;
+      }
+      const places = (data.features || [])
+        .filter((f) => Array.isArray(f.center) && f.center.length >= 2)
+        .map((f) => {
+          const [lng, lat] = f.center!;
+          const address = String(f.place_name || "Bhopal, Madhya Pradesh, India");
+          const ctxLoc = (f.context || []).find(
+            (c) =>
+              (c.id?.startsWith("neighborhood.") ||
+                c.id?.startsWith("locality.") ||
+                c.id?.startsWith("district.")) &&
+              c.text &&
+              c.text.toLowerCase() !== "bhopal"
+          )?.text;
+          return {
+            id: String(f.id || `mb-${lat.toFixed(5)}-${lng.toFixed(5)}`),
+            name: String(f.text || address),
+            locality: ctxLoc || "Bhopal",
+            address,
+            lat,
+            lng,
+            category: f.properties?.category || null,
+          };
+        });
+      res.json({ places });
+    } catch (err) {
+      res.status(502).json({
+        error: err instanceof Error ? err.message : "Mapbox Geocoding request failed",
+      });
+    }
+  });
+
+  app.post("/api/mapbox/directions", async (req: Request, res: Response) => {
+    const token =
+      process.env.VITE_MAPBOX_ACCESS_TOKEN ||
+      process.env.MAPBOX_ACCESS_TOKEN ||
+      process.env.VITE_MAPBOX_TOKEN ||
+      process.env.MAPBOX_TOKEN ||
+      "";
+    if (!token) {
+      res.status(503).json({ error: "MAPBOX_ACCESS_TOKEN is not configured in environment." });
+      return;
+    }
+    const coords = (req.body as { coordinates?: Array<{ lat: number; lng: number }> })?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) {
+      res.status(400).json({ error: "Provide at least 2 coordinates for Mapbox Directions." });
+      return;
+    }
+    const coordStr = coords
+      .slice(0, 25)
+      .map((pt) => `${Number(pt.lng)},${Number(pt.lat)}`)
+      .join(";");
+    const url =
+      `https://api.mapbox.com/directions/v5/mapbox/driving/${coordStr}` +
+      `?geometries=geojson&overview=full&steps=true&language=en&access_token=${encodeURIComponent(token)}`;
+    try {
+      const upstream = await fetch(url);
+      const data = (await upstream.json()) as {
+        routes?: Array<{
+          distance?: number;
+          duration?: number;
+          geometry?: { type: "LineString"; coordinates: Array<[number, number]> };
+          legs?: Array<{
+            steps?: Array<{
+              distance?: number;
+              maneuver?: { instruction?: string };
+            }>;
+          }>;
+        }>;
+        message?: string;
+      };
+      if (!upstream.ok) {
+        res.status(upstream.status).json({ error: data.message || "Mapbox Directions error" });
+        return;
+      }
+      const primary = data.routes?.[0];
+      if (!primary?.geometry) {
+        res.status(404).json({ error: "No Mapbox driving route found for the selected stops." });
+        return;
+      }
+      const steps: Array<{ instruction: string; distanceText: string }> = [];
+      for (const leg of primary.legs || []) {
+        for (const step of leg.steps || []) {
+          const instr = step.maneuver?.instruction?.trim();
+          if (!instr) continue;
+          const meters = Number(step.distance || 0);
+          steps.push({
+            instruction: instr,
+            distanceText: meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`,
+          });
+        }
+      }
+      res.json({
+        distanceKm: Math.round((Number(primary.distance || 0) / 1000) * 10) / 10,
+        durationMin: Math.max(1, Math.round(Number(primary.duration || 0) / 60)),
+        geometry: primary.geometry,
+        steps: steps.slice(0, 10),
+      });
+    } catch (err) {
+      res.status(502).json({
+        error: err instanceof Error ? err.message : "Mapbox Directions request failed",
+      });
+    }
+  });
+
   // Proxy all /api/py/* traffic to Python 3.11 SQLite backend
   app.use("/api/py", async (req: Request, res: Response) => {
     try {

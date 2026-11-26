@@ -2,7 +2,7 @@
 
 import os
 import sys
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 os.environ.setdefault("VERCEL", "1")
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,9 +22,16 @@ class handler(MediTrackHandler):
             target = qs["path"][0]
             if not target.startswith("/api/py"):
                 target = f"/api/py/{target.lstrip('/')}"
+            extra = {k: v for k, v in qs.items() if k != "path"}
+            if extra:
+                sep = "&" if "?" in target else "?"
+                target = f"{target}{sep}{urlencode(extra, doseq=True)}"
             self.path = target
         elif not parsed.path.startswith("/api/py"):
-            self.path = f"/api/py/{parsed.path.lstrip('/')}"
+            target = f"/api/py/{parsed.path.lstrip('/')}"
+            if parsed.query:
+                target = f"{target}?{parsed.query}"
+            self.path = target
 
     def do_GET(self) -> None:  # type: ignore[override]
         init_db()

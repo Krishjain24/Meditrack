@@ -222,8 +222,16 @@ export interface MapboxPlaceResult {
 export async function searchBhopalMapboxPlaces(
   query: string
 ): Promise<{ places: MapboxPlaceResult[] }> {
-  const res = await fetch(`/api/py/mapbox/search?q=${encodeURIComponent(query)}`);
-  return parseJsonOrThrow<{ places: MapboxPlaceResult[] }>(res);
+  const qs = encodeURIComponent(query);
+  const pyRes = await fetch(`/api/py/mapbox/search?q=${qs}`);
+  if (pyRes.ok) {
+    return parseJsonOrThrow<{ places: MapboxPlaceResult[] }>(pyRes);
+  }
+  const expressRes = await fetch(`/api/mapbox/search?q=${qs}`);
+  if (expressRes.ok) {
+    return parseJsonOrThrow<{ places: MapboxPlaceResult[] }>(expressRes);
+  }
+  return parseJsonOrThrow<{ places: MapboxPlaceResult[] }>(pyRes);
 }
 
 export interface MapboxDirectionsResult {
@@ -242,11 +250,19 @@ export interface MapboxDirectionsResult {
 export async function fetchMapboxDirections(
   coordinates: Array<{ lat: number; lng: number }>
 ): Promise<MapboxDirectionsResult> {
-  const res = await fetch("/api/py/mapbox/directions", {
+  const init: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ coordinates }),
-  });
-  return parseJsonOrThrow<MapboxDirectionsResult>(res);
+  };
+  const pyRes = await fetch("/api/py/mapbox/directions", init);
+  if (pyRes.ok) {
+    return parseJsonOrThrow<MapboxDirectionsResult>(pyRes);
+  }
+  const expressRes = await fetch("/api/mapbox/directions", init);
+  if (expressRes.ok) {
+    return parseJsonOrThrow<MapboxDirectionsResult>(expressRes);
+  }
+  return parseJsonOrThrow<MapboxDirectionsResult>(pyRes);
 }
 

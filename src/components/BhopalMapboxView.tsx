@@ -43,6 +43,20 @@ const MAPBOX_STYLES: Array<{ id: string; label: string; url: string }> = [
   },
 ];
 
+function disableMapboxTelemetry(): void {
+  try {
+    const cfg = (mapboxgl as unknown as { config?: Record<string, unknown> }).config;
+    if (cfg) {
+      Object.defineProperty(cfg, "EVENTS_URL", {
+        get: () => null,
+        configurable: true,
+      });
+    }
+  } catch {
+    // ignore if non-configurable
+  }
+}
+
 function createPinElement(
   label: string,
   bgColor: string,
@@ -325,6 +339,7 @@ export function BhopalMapboxView({
   useEffect(() => {
     if (!mapboxToken || !mapContainerRef.current) return;
 
+    disableMapboxTelemetry();
     mapboxgl.accessToken = mapboxToken;
     const styleObj =
       MAPBOX_STYLES.find((s) => s.id === styleId) ?? MAPBOX_STYLES[0];
@@ -335,11 +350,24 @@ export function BhopalMapboxView({
       center: BHOPAL_CENTER,
       zoom: 12,
       attributionControl: true,
+      collectResourceTiming: false,
     });
 
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
     map.addControl(new mapboxgl.FullscreenControl(), "top-right");
     mapRef.current = map;
+
+    map.on("error", (ev) => {
+      const msg = String(ev?.error?.message || "");
+      if (
+        msg.includes("events.mapbox") ||
+        msg.includes("ERR_BLOCKED_BY_CLIENT") ||
+        msg.includes("Failed to fetch")
+      ) {
+        return;
+      }
+      setPlacesError((prev) => prev || msg || "Mapbox rendering error");
+    });
 
     map.on("load", () => {
       drawRouteOnMap(map, roadRoute);
