@@ -1,0 +1,624 @@
+{
+  "entities": {
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized administrator role marker document.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase UID of the administrator.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "description": "Administrative role level.",
+          "enum": ["admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": ["ownerId", "role", "createdAt"]
+    },
+    "SmartBinRecord": {
+      "title": "SmartBinRecord",
+      "description": "Persistent smart medical waste bin telemetry and lid interlock state.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Workspace owner Firebase UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bin_code": {
+          "type": "string",
+          "description": "Unique smart bin identifier.",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "facility_name": {
+          "type": "string",
+          "description": "Bhopal healthcare facility name.",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "ward": {
+          "type": "string",
+          "description": "Hospital ward or department.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "description": "CPCB biomedical waste stream.",
+          "enum": ["yellow", "red", "white", "blue"]
+        },
+        "fill_level": {
+          "type": "number",
+          "description": "Current ultrasonic fill percentage (0-100)."
+        },
+        "weight_kg": {
+          "type": "number",
+          "description": "Current load cell weight in kilograms."
+        },
+        "capacity_kg": {
+          "type": "number",
+          "description": "Maximum bin capacity in kilograms."
+        },
+        "lid_locked": {
+          "type": "integer",
+          "description": "Safety interlock state (0 = unlocked, 1 = locked)."
+        },
+        "lid_status": {
+          "type": "string",
+          "description": "Human-readable interlock status.",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "temp_c": {
+          "type": "number",
+          "description": "Chamber temperature in Celsius."
+        },
+        "gas_ppm": {
+          "type": "number",
+          "description": "Bio-gas VOC sensor reading in ppm."
+        },
+        "battery_pct": {
+          "type": "number",
+          "description": "ESP32 node battery percentage."
+        },
+        "lat": {
+          "type": "number",
+          "description": "Facility latitude."
+        },
+        "lng": {
+          "type": "number",
+          "description": "Facility longitude."
+        },
+        "status": {
+          "type": "string",
+          "description": "Operational telemetry state.",
+          "enum": ["nominal", "warning", "overflow_alert", "dispatched"]
+        },
+        "last_updated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 telemetry update timestamp.",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "bin_code",
+        "facility_name",
+        "ward",
+        "category",
+        "fill_level",
+        "weight_kg",
+        "capacity_kg",
+        "lid_locked",
+        "lid_status",
+        "temp_c",
+        "gas_ppm",
+        "battery_pct",
+        "lat",
+        "lng",
+        "status",
+        "last_updated",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SegregationEventRecord": {
+      "title": "SegregationEventRecord",
+      "description": "Immutable log of a smart biomedical waste segregation event.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "event_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "item_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "detected_category": {
+          "type": "string",
+          "enum": ["yellow", "red", "white", "blue"]
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "bin_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "facility_name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "weight_g": {
+          "type": "number"
+        },
+        "lid_actuated": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "treatment_method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "operator": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "event_code",
+        "timestamp",
+        "item_name",
+        "detected_category",
+        "confidence",
+        "method",
+        "bin_code",
+        "facility_name",
+        "weight_g",
+        "lid_actuated",
+        "treatment_method",
+        "operator",
+        "createdAt"
+      ]
+    },
+    "CollectionAlertRecord": {
+      "title": "CollectionAlertRecord",
+      "description": "Pickup request or automated overflow alert queued for dispatch.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "alert_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "bin_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "facility_name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "ward": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "enum": ["yellow", "red", "white", "blue"]
+        },
+        "fill_level": {
+          "type": "number"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["critical", "high", "normal"]
+        },
+        "trigger_source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "assigned", "collected"]
+        },
+        "assigned_vehicle": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "resolved_at": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "alert_code",
+        "bin_code",
+        "facility_name",
+        "ward",
+        "category",
+        "fill_level",
+        "priority",
+        "trigger_source",
+        "status",
+        "assigned_vehicle",
+        "notes",
+        "created_at",
+        "resolved_at",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "VehicleRecord": {
+      "title": "VehicleRecord",
+      "description": "Biomedical waste collection truck and assigned GPS stops.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "vehicle_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "driver_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "capacity_kg": {
+          "type": "number"
+        },
+        "current_load_kg": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["idle", "standby", "en_route", "dispatched", "returning"]
+        },
+        "assigned_route": {
+          "type": "array",
+          "description": "Bounded list of assigned route stops (max 25)."
+        },
+        "last_updated": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "vehicle_code",
+        "driver_name",
+        "lat",
+        "lng",
+        "capacity_kg",
+        "current_load_kg",
+        "status",
+        "assigned_route",
+        "last_updated",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DisposalManifestRecord": {
+      "title": "DisposalManifestRecord",
+      "description": "Tamper-evident QR chain-of-custody disposal manifest.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "manifest_id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "qr_payload": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 1000
+        },
+        "bin_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "facility_name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "enum": ["yellow", "red", "white", "blue"]
+        },
+        "weight_kg": {
+          "type": "number"
+        },
+        "treatment_method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "vehicle_code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pickup_time": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "disposal_time": {
+          "type": "string",
+          "format": "date-time",
+          "minLength": 10,
+          "maxLength": 64
+        },
+        "compliance_status": {
+          "type": "string",
+          "enum": ["verified", "pending", "Verified", "Pending"]
+        },
+        "chain_hash": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "manifest_id",
+        "qr_payload",
+        "bin_code",
+        "facility_name",
+        "category",
+        "weight_kg",
+        "treatment_method",
+        "vehicle_code",
+        "pickup_time",
+        "disposal_time",
+        "compliance_status",
+        "chain_hash",
+        "createdAt"
+      ]
+    },
+    "VisitorSessionRecord": {
+      "title": "VisitorSessionRecord",
+      "description": "Privacy-respecting pseudonymous session and consented location telemetry.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "visitor_id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "landing_page": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "current_page": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "device_category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "browser": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "location_source": {
+          "type": "string",
+          "enum": ["gps", "ip", "none"]
+        },
+        "gps_consent_status": {
+          "type": "string",
+          "enum": ["unset", "granted", "denied", "revoked"]
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "accuracy_m": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "visitor_id",
+        "session_id",
+        "landing_page",
+        "current_page",
+        "device_category",
+        "browser",
+        "location_source",
+        "gps_consent_status",
+        "latitude",
+        "longitude",
+        "accuracy_m",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Admin role directory."
+    },
+    "/smartBins/{binDocId}": {
+      "schema": { "$ref": "#/entities/SmartBinRecord" },
+      "description": "Real-time smart bin inventory and sensor telemetry."
+    },
+    "/segregationEvents/{eventDocId}": {
+      "schema": { "$ref": "#/entities/SegregationEventRecord" },
+      "description": "Real-time biomedical waste segregation event history."
+    },
+    "/collectionAlerts/{alertDocId}": {
+      "schema": { "$ref": "#/entities/CollectionAlertRecord" },
+      "description": "Pending, assigned, and collected pickup alerts."
+    },
+    "/vehicles/{vehicleDocId}": {
+      "schema": { "$ref": "#/entities/VehicleRecord" },
+      "description": "Fleet vehicles and route assignment state."
+    },
+    "/disposalLedger/{manifestDocId}": {
+      "schema": { "$ref": "#/entities/DisposalManifestRecord" },
+      "description": "Immutable QR chain-of-custody disposal manifests."
+    },
+    "/visitorSessions/{sessionDocId}": {
+      "schema": { "$ref": "#/entities/VisitorSessionRecord" },
+      "description": "Cloud-synced pseudonymous visitor telemetry and consented GPS coordinates."
+    }
+  }
+}

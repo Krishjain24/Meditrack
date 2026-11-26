@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowRight, CheckCircle2, Download, Search } from "lucide-react";
+import { ArrowRight, CheckCircle2, Search } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -118,16 +118,6 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
                 className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600"
               />
             </div>
-
-            <a
-              href="/api/py/reports/facility-compliance/csv"
-              download="meditrack_facility_compliance_status.csv"
-              data-testid="overview-export-compliance-csv"
-              className="px-3.5 py-2 text-sm font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors whitespace-nowrap shrink-0 inline-flex items-center justify-center gap-2"
-            >
-              <Download className="w-4 h-4" aria-hidden="true" />
-              <span>Compliance CSV</span>
-            </a>
 
             <button
               type="button"
@@ -437,8 +427,8 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 {q
-                  ? "Clear the search filter or inspect all telemetry in IoT Fleet."
-                  : "Log incoming biomedical waste in Segregation / IoT Fleet or raise a pickup request to dispatch collection."}
+                  ? "Clear the search filter or inspect all telemetry in Smart Bins."
+                  : "Log incoming biomedical waste in Segregation / Smart Bins or raise a pickup request to dispatch collection."}
               </p>
             </div>
           ) : (

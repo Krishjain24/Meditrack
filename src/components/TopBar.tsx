@@ -9,10 +9,10 @@ interface TopBarProps {
 const NAV_ITEMS: Array<{ id: ActiveTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "segregation", label: "Segregation" },
-  { id: "fleet", label: "IoT Fleet" },
+  { id: "fleet", label: "Smart Bins" },
   { id: "routes", label: "Route Map" },
   { id: "compliance", label: "Compliance" },
-  { id: "visitors", label: "Visitors" },
+  { id: "visitors", label: "Live Traffic" },
 ];
 
 export function TopBar({

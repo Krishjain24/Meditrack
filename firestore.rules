@@ -1,0 +1,374 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Security & Validation Primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'krish.jain.workk@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidShortCode(code) {
+      return code is string && code.size() >= 2 && code.size() <= 64 && code.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidBinCode(code) {
+      return code is string && code.size() >= 2 && code.size() <= 40 && code.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCategory(cat) {
+      return cat is string && cat in ['yellow', 'red', 'white', 'blue'];
+    }
+
+    function isValidTimestampStr(val) {
+      return val is string && val.size() >= 10 && val.size() <= 64;
+    }
+
+    function hasBackingSmartBin(ownerId, binCode) {
+      return exists(/databases/$(database)/documents/smartBins/$(ownerId + '_' + binCode)) ||
+        existsAfter(/databases/$(database)/documents/smartBins/$(ownerId + '_' + binCode));
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['ownerId', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['ownerId', 'role', 'createdAt']) &&
+        isValidId(data.ownerId) &&
+        data.role == 'admin' &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidSmartBin(data) {
+      return data.keys().hasAll([
+          'ownerId', 'bin_code', 'facility_name', 'ward', 'category',
+          'fill_level', 'weight_kg', 'capacity_kg', 'lid_locked', 'lid_status',
+          'temp_c', 'gas_ppm', 'battery_pct', 'lat', 'lng', 'status',
+          'last_updated', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'bin_code', 'facility_name', 'ward', 'category',
+          'fill_level', 'weight_kg', 'capacity_kg', 'lid_locked', 'lid_status',
+          'temp_c', 'gas_ppm', 'battery_pct', 'lat', 'lng', 'status',
+          'last_updated', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidBinCode(data.bin_code) &&
+        data.facility_name is string && data.facility_name.size() >= 2 && data.facility_name.size() <= 120 &&
+        data.ward is string && data.ward.size() >= 1 && data.ward.size() <= 120 &&
+        isValidCategory(data.category) &&
+        data.fill_level is number && data.fill_level >= 0 && data.fill_level <= 100 &&
+        data.weight_kg is number && data.weight_kg >= 0 && data.weight_kg <= 500 &&
+        data.capacity_kg is number && data.capacity_kg >= 1 && data.capacity_kg <= 500 &&
+        data.lid_locked is int && (data.lid_locked == 0 || data.lid_locked == 1) &&
+        data.lid_status is string && data.lid_status.size() >= 1 && data.lid_status.size() <= 40 &&
+        data.temp_c is number && data.temp_c >= -20 && data.temp_c <= 80 &&
+        data.gas_ppm is number && data.gas_ppm >= 0 && data.gas_ppm <= 10000 &&
+        data.battery_pct is number && data.battery_pct >= 0 && data.battery_pct <= 100 &&
+        data.lat is number && data.lat >= -90 && data.lat <= 90 &&
+        data.lng is number && data.lng >= -180 && data.lng <= 180 &&
+        data.status is string && data.status in ['nominal', 'warning', 'overflow_alert', 'dispatched'] &&
+        isValidTimestampStr(data.last_updated) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSegregationEvent(data) {
+      return data.keys().hasAll([
+          'ownerId', 'event_code', 'timestamp', 'item_name', 'detected_category',
+          'confidence', 'method', 'bin_code', 'facility_name', 'weight_g',
+          'lid_actuated', 'treatment_method', 'operator', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'event_code', 'timestamp', 'item_name', 'detected_category',
+          'confidence', 'method', 'bin_code', 'facility_name', 'weight_g',
+          'lid_actuated', 'treatment_method', 'operator', 'createdAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidShortCode(data.event_code) &&
+        isValidTimestampStr(data.timestamp) &&
+        data.item_name is string && data.item_name.size() >= 1 && data.item_name.size() <= 160 &&
+        isValidCategory(data.detected_category) &&
+        data.confidence is number && data.confidence >= 0 && data.confidence <= 1 &&
+        data.method is string && data.method.size() >= 1 && data.method.size() <= 120 &&
+        isValidBinCode(data.bin_code) &&
+        data.facility_name is string && data.facility_name.size() >= 2 && data.facility_name.size() <= 120 &&
+        data.weight_g is number && data.weight_g > 0 && data.weight_g <= 100000 &&
+        data.lid_actuated is string && data.lid_actuated.size() >= 1 && data.lid_actuated.size() <= 120 &&
+        data.treatment_method is string && data.treatment_method.size() >= 1 && data.treatment_method.size() <= 140 &&
+        data.operator is string && data.operator.size() >= 1 && data.operator.size() <= 120 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidCollectionAlert(data) {
+      return data.keys().hasAll([
+          'ownerId', 'alert_code', 'bin_code', 'facility_name', 'ward',
+          'category', 'fill_level', 'priority', 'trigger_source', 'status',
+          'assigned_vehicle', 'notes', 'created_at', 'resolved_at', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'alert_code', 'bin_code', 'facility_name', 'ward',
+          'category', 'fill_level', 'priority', 'trigger_source', 'status',
+          'assigned_vehicle', 'notes', 'created_at', 'resolved_at', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidShortCode(data.alert_code) &&
+        isValidBinCode(data.bin_code) &&
+        data.facility_name is string && data.facility_name.size() >= 2 && data.facility_name.size() <= 120 &&
+        data.ward is string && data.ward.size() >= 1 && data.ward.size() <= 120 &&
+        isValidCategory(data.category) &&
+        data.fill_level is number && data.fill_level >= 0 && data.fill_level <= 100 &&
+        data.priority is string && data.priority in ['critical', 'high', 'normal'] &&
+        data.trigger_source is string && data.trigger_source.size() >= 1 && data.trigger_source.size() <= 60 &&
+        data.status is string && data.status in ['pending', 'assigned', 'collected'] &&
+        (data.assigned_vehicle == null || (data.assigned_vehicle is string && data.assigned_vehicle.size() <= 40)) &&
+        (data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+        isValidTimestampStr(data.created_at) &&
+        (data.resolved_at == null || isValidTimestampStr(data.resolved_at)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidVehicle(data) {
+      return data.keys().hasAll([
+          'ownerId', 'vehicle_code', 'driver_name', 'lat', 'lng',
+          'capacity_kg', 'current_load_kg', 'status', 'assigned_route',
+          'last_updated', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'vehicle_code', 'driver_name', 'lat', 'lng',
+          'capacity_kg', 'current_load_kg', 'status', 'assigned_route',
+          'last_updated', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidBinCode(data.vehicle_code) &&
+        data.driver_name is string && data.driver_name.size() >= 1 && data.driver_name.size() <= 100 &&
+        data.lat is number && data.lat >= -90 && data.lat <= 90 &&
+        data.lng is number && data.lng >= -180 && data.lng <= 180 &&
+        data.capacity_kg is number && data.capacity_kg >= 10 && data.capacity_kg <= 5000 &&
+        data.current_load_kg is number && data.current_load_kg >= 0 && data.current_load_kg <= 5000 &&
+        data.status is string && data.status in ['idle', 'standby', 'en_route', 'dispatched', 'returning'] &&
+        data.assigned_route is list && data.assigned_route.size() <= 25 &&
+        (data.assigned_route.size() == 0 || data.assigned_route[0] is map) &&
+        isValidTimestampStr(data.last_updated) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDisposalManifest(data) {
+      return data.keys().hasAll([
+          'ownerId', 'manifest_id', 'qr_payload', 'bin_code', 'facility_name',
+          'category', 'weight_kg', 'treatment_method', 'vehicle_code',
+          'pickup_time', 'disposal_time', 'compliance_status', 'chain_hash', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'manifest_id', 'qr_payload', 'bin_code', 'facility_name',
+          'category', 'weight_kg', 'treatment_method', 'vehicle_code',
+          'pickup_time', 'disposal_time', 'compliance_status', 'chain_hash', 'createdAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidShortCode(data.manifest_id) &&
+        data.qr_payload is string && data.qr_payload.size() >= 2 && data.qr_payload.size() <= 1000 &&
+        isValidBinCode(data.bin_code) &&
+        data.facility_name is string && data.facility_name.size() >= 2 && data.facility_name.size() <= 120 &&
+        isValidCategory(data.category) &&
+        data.weight_kg is number && data.weight_kg >= 0 && data.weight_kg <= 1000 &&
+        data.treatment_method is string && data.treatment_method.size() >= 1 && data.treatment_method.size() <= 140 &&
+        isValidBinCode(data.vehicle_code) &&
+        isValidTimestampStr(data.pickup_time) &&
+        isValidTimestampStr(data.disposal_time) &&
+        data.compliance_status is string && data.compliance_status in ['verified', 'pending', 'Verified', 'Pending'] &&
+        data.chain_hash is string && data.chain_hash.size() >= 8 && data.chain_hash.size() <= 128 &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidVisitorSession(data) {
+      return data.keys().hasAll([
+          'ownerId', 'visitor_id', 'session_id', 'landing_page', 'current_page',
+          'device_category', 'browser', 'location_source', 'gps_consent_status',
+          'latitude', 'longitude', 'accuracy_m', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ownerId', 'visitor_id', 'session_id', 'landing_page', 'current_page',
+          'device_category', 'browser', 'location_source', 'gps_consent_status',
+          'latitude', 'longitude', 'accuracy_m', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.ownerId) &&
+        isValidShortCode(data.visitor_id) &&
+        isValidShortCode(data.session_id) &&
+        data.landing_page is string && data.landing_page.size() >= 1 && data.landing_page.size() <= 200 &&
+        data.current_page is string && data.current_page.size() >= 1 && data.current_page.size() <= 200 &&
+        data.device_category is string && data.device_category.size() >= 1 && data.device_category.size() <= 40 &&
+        data.browser is string && data.browser.size() >= 1 && data.browser.size() <= 40 &&
+        data.location_source is string && data.location_source in ['gps', 'ip', 'none'] &&
+        data.gps_consent_status is string && data.gps_consent_status in ['unset', 'granted', 'denied', 'revoked'] &&
+        (data.latitude == null || (data.latitude is number && data.latitude >= -90 && data.latitude <= 90)) &&
+        (data.longitude == null || (data.longitude is number && data.longitude >= -180 && data.longitude <= 180)) &&
+        (data.accuracy_m == null || (data.accuracy_m is number && data.accuracy_m >= 0 && data.accuracy_m <= 100000)) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create: if isBootstrappedAdmin() && isValidId(adminUid) && isValidAdminUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isBootstrappedAdmin() && isValidId(adminUid) && isValidAdminUser(incoming()) && incoming().ownerId == existing().ownerId && incoming().createdAt == existing().createdAt;
+      allow delete: if isBootstrappedAdmin() && isValidId(adminUid);
+    }
+
+    match /smartBins/{binDocId} {
+      allow get: if isVerifiedUser() && isValidId(binDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(binDocId) &&
+        isValidSmartBin(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        binDocId == (incoming().ownerId + '_' + incoming().bin_code) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(binDocId) &&
+        isValidSmartBin(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().bin_code == existing().bin_code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (existing().ownerId == request.auth.uid || isAdmin()) && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['fill_level', 'weight_kg', 'lid_locked', 'lid_status', 'temp_c', 'gas_ppm', 'battery_pct', 'status', 'last_updated', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['lid_locked', 'lid_status', 'last_updated', 'updatedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(binDocId);
+    }
+
+    match /segregationEvents/{eventDocId} {
+      allow get: if isVerifiedUser() && isValidId(eventDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(eventDocId) &&
+        isValidSegregationEvent(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        hasBackingSmartBin(incoming().ownerId, incoming().bin_code);
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(eventDocId);
+    }
+
+    match /collectionAlerts/{alertDocId} {
+      allow get: if isVerifiedUser() && isValidId(alertDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(alertDocId) &&
+        isValidCollectionAlert(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        hasBackingSmartBin(incoming().ownerId, incoming().bin_code);
+      allow update: if isVerifiedUser() &&
+        isValidId(alertDocId) &&
+        isValidCollectionAlert(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().alert_code == existing().alert_code &&
+        incoming().created_at == existing().created_at &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (existing().ownerId == request.auth.uid || isAdmin()) &&
+        (existing().status != 'collected' || isAdmin()) && (
+          isAdmin() ||
+          (incoming().status == existing().status && incoming().diff(existing()).affectedKeys().hasOnly(['fill_level', 'priority', 'updatedAt'])) ||
+          (incoming().status == 'assigned' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assigned_vehicle', 'updatedAt'])) ||
+          (incoming().status == 'collected' && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'resolved_at', 'assigned_vehicle', 'updatedAt']))
+        );
+      allow delete: if isAdmin() && isValidId(alertDocId);
+    }
+
+    match /vehicles/{vehicleDocId} {
+      allow get: if isVerifiedUser() && isValidId(vehicleDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(vehicleDocId) &&
+        isValidVehicle(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(vehicleDocId) &&
+        isValidVehicle(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().vehicle_code == existing().vehicle_code &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (existing().ownerId == request.auth.uid || isAdmin()) && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['lat', 'lng', 'current_load_kg', 'status', 'assigned_route', 'last_updated', 'updatedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(vehicleDocId);
+    }
+
+    match /disposalLedger/{manifestDocId} {
+      allow get: if isVerifiedUser() && isValidId(manifestDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(manifestDocId) &&
+        isValidDisposalManifest(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        hasBackingSmartBin(incoming().ownerId, incoming().bin_code);
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(manifestDocId);
+    }
+
+    match /visitorSessions/{sessionDocId} {
+      allow get: if isVerifiedUser() && isValidId(sessionDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (existing().ownerId == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isVerifiedUser() &&
+        isValidId(sessionDocId) &&
+        isValidVisitorSession(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(sessionDocId) &&
+        isValidVisitorSession(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().visitor_id == existing().visitor_id &&
+        incoming().session_id == existing().session_id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (existing().ownerId == request.auth.uid || isAdmin()) && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['current_page', 'location_source', 'gps_consent_status', 'latitude', 'longitude', 'accuracy_m', 'updatedAt'])
+        );
+      allow delete: if isVerifiedUser() && isValidId(sessionDocId) && (existing().ownerId == request.auth.uid || isAdmin());
+    }
+  }
+}

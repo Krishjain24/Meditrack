@@ -48,10 +48,10 @@ export interface VisitorPrivacyControls {
 const TAB_TITLES: Record<ActiveTab, string> = {
   overview: "MediTrack Overview",
   segregation: "MediTrack Segregation",
-  fleet: "MediTrack IoT Fleet",
+  fleet: "MediTrack Smart Bins",
   routes: "MediTrack Route Map",
   compliance: "MediTrack Compliance",
-  visitors: "MediTrack Visitor Intelligence",
+  visitors: "MediTrack Live Traffic",
 };
 
 function getSafeReferrer(): string {
