@@ -7,6 +7,9 @@ import { PickupRequestModal } from "./components/PickupRequestModal";
 import { RouteMapView } from "./components/RouteMapView";
 import { SegregationView } from "./components/SegregationView";
 import { TopBar } from "./components/TopBar";
+import { VisitorAnalyticsView } from "./components/VisitorAnalyticsView";
+import { VisitorConsentBanner } from "./components/VisitorConsentBanner";
+import { useVisitorIntelligence } from "./components/VisitorTracker";
 import type { ActiveTab, DashboardPayload } from "./types/meditrack";
 
 function getInitialTab(): ActiveTab {
@@ -18,7 +21,8 @@ function getInitialTab(): ActiveTab {
     tab === "segregation" ||
     tab === "fleet" ||
     tab === "routes" ||
-    tab === "compliance"
+    tab === "compliance" ||
+    tab === "visitors"
   ) {
     return tab;
   }
@@ -34,6 +38,7 @@ export default function App() {
   const [mapsApiKey, setMapsApiKey] = useState<string>("");
   const [mapboxToken, setMapboxToken] = useState<string>("");
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState<boolean>(false);
+  const visitorPrivacy = useVisitorIntelligence(activeTab);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -157,7 +162,12 @@ export default function App() {
               />
             )}
             {activeTab === "compliance" && <ComplianceView data={dashboard} />}
+            {activeTab === "visitors" && (
+              <VisitorAnalyticsView mapboxToken={mapboxToken} />
+            )}
           </>
+        ) : activeTab === "visitors" ? (
+          <VisitorAnalyticsView mapboxToken={mapboxToken} />
         ) : null}
       </main>
 
@@ -166,7 +176,7 @@ export default function App() {
           <span>
           created by -krish jain
           </span>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <button
               type="button"
               onClick={() => handleSelectTab("compliance")}
@@ -180,6 +190,14 @@ export default function App() {
               className="hover:text-slate-900 transition-colors"
             >
               Raise Pickup Request
+            </button>
+            <button
+              type="button"
+              onClick={visitorPrivacy.openPrivacyModal}
+              data-testid="footer-privacy-btn"
+              className="hover:text-slate-900 transition-colors"
+            >
+              Location &amp; Privacy
             </button>
           </div>
         </div>
@@ -196,6 +214,8 @@ export default function App() {
           }}
         />
       )}
+
+      <VisitorConsentBanner controls={visitorPrivacy} />
     </div>
   );
 }

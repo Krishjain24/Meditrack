@@ -12,6 +12,7 @@ const NAV_ITEMS: Array<{ id: ActiveTab; label: string }> = [
   { id: "fleet", label: "IoT Fleet" },
   { id: "routes", label: "Route Map" },
   { id: "compliance", label: "Compliance" },
+  { id: "visitors", label: "Visitors" },
 ];
 
 export function TopBar({
@@ -79,7 +80,7 @@ export function TopBar({
       {/* Compact mobile navigation row */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden flex items-center gap-4 px-4 overflow-x-auto border-t border-slate-100 bg-slate-50/80"
+        className="md:hidden flex items-center justify-between gap-2.5 px-3 overflow-x-auto border-t border-slate-100 bg-slate-50/80"
       >
         {NAV_ITEMS.map((item) => {
           const isActive = activeTab === item.id;

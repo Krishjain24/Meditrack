@@ -7,7 +7,8 @@ export type ActiveTab =
   | "segregation"
   | "fleet"
   | "routes"
-  | "compliance";
+  | "compliance"
+  | "visitors";
 
 export interface SmartBin {
   id: number;
@@ -223,3 +224,205 @@ export interface RoutePlan {
   fuel_saved_liters?: number;
   estimated_minutes: number;
 }
+
+export type GpsConsentStatus = "unset" | "granted" | "denied" | "revoked";
+export type VisitorLocationSource = "gps" | "ip" | "none";
+export type DateRangePreset = "today" | "yesterday" | "7d" | "30d" | "all" | "custom";
+
+export interface VisitorSessionState {
+  visitorId: string;
+  sessionId: string;
+  isReturning: boolean;
+  gpsConsentStatus: GpsConsentStatus;
+  continuousGpsConsent: boolean;
+  analyticsOptOut: boolean;
+  locationSource: VisitorLocationSource;
+}
+
+export interface AdminAuthStatus {
+  configured: boolean;
+  source: "env" | "claimed" | "unconfigured";
+  authenticated: boolean;
+  adminLabel: string | null;
+  expiresAt: string | null;
+}
+
+export interface AdminNotificationItem {
+  id: number;
+  severity: "info" | "warning";
+  title: string;
+  message: string;
+  created_at: string;
+  acknowledged: number;
+}
+
+export interface VisitorOverviewPayload {
+  kpis: {
+    total_visitors: number;
+    unique_visitors: number;
+    returning_visitors: number;
+    returning_sessions: number;
+    active_sessions: number;
+    gps_visitors: number;
+    ip_visitors: number;
+    total_page_views: number;
+    avg_session_duration_sec: number;
+  };
+  notifications: AdminNotificationItem[];
+  retention_days: number;
+  ip_geo_provider: string;
+}
+
+export interface VisitorMapMarker {
+  session_id: string;
+  visitor_id: string;
+  location_source: VisitorLocationSource;
+  is_estimated: boolean;
+  latitude: number;
+  longitude: number;
+  accuracy_m: number | null;
+  location_timestamp: string | null;
+  country: string;
+  region: string;
+  city: string;
+  device_category: string;
+  browser: string;
+  duration_sec: number;
+  is_returning: boolean;
+  current_page: string;
+  last_active_at: string;
+  is_active: boolean;
+  gps_consent_status: GpsConsentStatus;
+}
+
+export interface VisitorRecord {
+  session_id: string;
+  visitor_id: string;
+  started_at: string;
+  last_active_at: string;
+  duration_sec: number;
+  is_returning: boolean;
+  visit_count: number;
+  landing_page: string;
+  current_page: string;
+  referrer_source: string;
+  page_views_count: number;
+  device_category: string;
+  browser: string;
+  location_source: VisitorLocationSource;
+  latitude: number | null;
+  longitude: number | null;
+  accuracy_m: number | null;
+  location_timestamp: string | null;
+  country: string;
+  region: string;
+  city: string;
+  gps_consent_status: GpsConsentStatus;
+  is_active: boolean;
+}
+
+export interface VisitorListPayload {
+  records: VisitorRecord[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface VisitorDetailPayload {
+  profile: {
+    visitor_id: string;
+    first_seen_at: string;
+    last_seen_at: string;
+    visit_count: number;
+    gps_consent_status: GpsConsentStatus;
+    gps_consent_updated_at: string | null;
+    continuous_gps_consent: boolean;
+    analytics_opt_out: boolean;
+    device_category: string;
+    browser: string;
+    os_family: string;
+  };
+  latest_location: {
+    location_source: VisitorLocationSource;
+    latitude: number | null;
+    longitude: number | null;
+    accuracy_m: number | null;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    location_timestamp: string | null;
+  };
+  sessions: Array<{
+    session_id: string;
+    started_at: string;
+    last_active_at: string;
+    duration_sec: number;
+    is_returning: number;
+    landing_page: string;
+    current_page: string;
+    referrer_source: string;
+    page_views_count: number;
+    device_category: string;
+    browser: string;
+    location_source: VisitorLocationSource;
+    latitude: number | null;
+    longitude: number | null;
+    accuracy_m: number | null;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    gps_consent_status: GpsConsentStatus;
+  }>;
+  page_views: Array<{
+    id: number;
+    session_id: string;
+    page_path: string;
+    page_title: string;
+    referrer_source: string;
+    viewed_at: string;
+  }>;
+  location_events: Array<{
+    id: number;
+    session_id: string;
+    location_source: VisitorLocationSource;
+    latitude: number | null;
+    longitude: number | null;
+    accuracy_m: number | null;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    recorded_at: string;
+  }>;
+  consent_logs: Array<{
+    id: number;
+    session_id: string;
+    consent_type: string;
+    status: string;
+    recorded_at: string;
+  }>;
+}
+
+export interface TrafficPoint {
+  period: string;
+  visits: number;
+  unique_visitors: number;
+  returning_visits: number;
+}
+
+export interface VisitorAnalyticsPayload {
+  daily_traffic: TrafficPoint[];
+  weekly_traffic: TrafficPoint[];
+  monthly_traffic: TrafficPoint[];
+  new_vs_returning: {
+    new_sessions: number;
+    returning_sessions: number;
+  };
+  countries: Array<{ name: string; count: number }>;
+  cities: Array<{ city: string; region: string; country: string; count: number }>;
+  top_pages: Array<{ page_path: string; views: number; unique_visitors: number }>;
+  referrers: Array<{ source: string; count: number }>;
+  devices: Array<{ name: string; count: number }>;
+  browsers: Array<{ name: string; count: number }>;
+}
+

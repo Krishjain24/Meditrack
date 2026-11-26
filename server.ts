@@ -102,6 +102,22 @@ function proxyToPython(req: Request, res: Response): void {
     headers["Content-Type"] = "application/json";
     headers["Content-Length"] = Buffer.byteLength(bodyStr);
   }
+  if (typeof req.headers.authorization === "string") {
+    headers["Authorization"] = req.headers.authorization;
+  }
+  const forwardedFor =
+    (typeof req.headers["x-forwarded-for"] === "string" && req.headers["x-forwarded-for"]) ||
+    req.socket.remoteAddress ||
+    "";
+  if (forwardedFor) {
+    headers["X-Forwarded-For"] = forwardedFor;
+  }
+  if (typeof req.headers["x-real-ip"] === "string") {
+    headers["X-Real-IP"] = req.headers["x-real-ip"];
+  }
+  if (typeof req.headers["user-agent"] === "string") {
+    headers["User-Agent"] = req.headers["user-agent"];
+  }
 
   const pyReq = http.request(
     {
@@ -121,6 +137,10 @@ function proxyToPython(req: Request, res: Response): void {
       const disposition = pyRes.headers["content-disposition"];
       if (disposition) {
         res.setHeader("Content-Disposition", disposition);
+      }
+      const cacheControl = pyRes.headers["cache-control"];
+      if (cacheControl) {
+        res.setHeader("Cache-Control", cacheControl);
       }
       pyRes.pipe(res);
     }

@@ -1,9 +1,18 @@
 import type {
+  AdminAuthStatus,
   ClassificationResult,
   DashboardPayload,
+  DateRangePreset,
   DisposalManifest,
+  GpsConsentStatus,
   RoutePlan,
   SmartBin,
+  VisitorAnalyticsPayload,
+  VisitorDetailPayload,
+  VisitorListPayload,
+  VisitorLocationSource,
+  VisitorMapMarker,
+  VisitorOverviewPayload,
   WasteCategoryKey,
 } from "../types/meditrack";
 
@@ -265,4 +274,297 @@ export async function fetchMapboxDirections(
   }
   return parseJsonOrThrow<MapboxDirectionsResult>(pyRes);
 }
+
+export async function registerVisitorVisit(payload: {
+  visitor_id: string;
+  session_id: string;
+  landing_page: string;
+  page_title: string;
+  referrer_source: string;
+  device_category: string;
+  browser: string;
+}): Promise<{
+  opted_out: boolean;
+  visitor_id: string;
+  session_id: string;
+  is_returning?: boolean;
+  gps_consent_status: GpsConsentStatus;
+  continuous_gps_consent: boolean;
+  location_source?: VisitorLocationSource;
+}> {
+  const res = await fetch("/api/py/visitor/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function sendVisitorEvent(
+  payload: {
+    visitor_id: string;
+    session_id: string;
+    event_type: "pageview" | "heartbeat" | "end";
+    page_path?: string;
+    page_title?: string;
+    referrer_source?: string;
+    duration_sec?: number;
+  },
+  keepalive = false
+): Promise<{ ok: boolean; duration_sec?: number; opted_out?: boolean }> {
+  const res = await fetch("/api/py/visitor/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive,
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function updateVisitorConsent(payload: {
+  visitor_id: string;
+  session_id: string;
+  consent_type: "gps" | "continuous_gps" | "analytics";
+  status: string;
+}): Promise<{
+  ok: boolean;
+  gps_consent_status: GpsConsentStatus;
+  continuous_gps_consent: boolean;
+  analytics_opt_out: boolean;
+}> {
+  const res = await fetch("/api/py/visitor/consent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function submitVisitorGpsLocation(payload: {
+  visitor_id: string;
+  session_id: string;
+  latitude: number;
+  longitude: number;
+  accuracy_m: number | null;
+  location_timestamp: string;
+  consent_granted?: boolean;
+  is_continuous?: boolean;
+}): Promise<{
+  ok: boolean;
+  location_source: VisitorLocationSource;
+  latitude: number;
+  longitude: number;
+  accuracy_m: number | null;
+}> {
+  const res = await fetch("/api/py/visitor/location/gps", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function deleteMyVisitorData(visitorId: string): Promise<{ deleted: boolean }> {
+  const res = await fetch(`/api/py/visitor/me?visitor_id=${encodeURIComponent(visitorId)}`, {
+    method: "DELETE",
+  });
+  return parseJsonOrThrow(res);
+}
+
+function adminHeaders(token?: string | null): HeadersInit {
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function fetchAdminAuthStatus(token?: string | null): Promise<AdminAuthStatus> {
+  const res = await fetch("/api/py/admin/auth/status", {
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow<AdminAuthStatus>(res);
+}
+
+export async function setupInitialAdmin(passcode: string): Promise<{
+  token: string;
+  expiresAt: string;
+  adminLabel: string;
+}> {
+  const res = await fetch("/api/py/admin/auth/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passcode }),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function loginAdmin(passcode: string): Promise<{
+  token: string;
+  expiresAt: string;
+  adminLabel: string;
+}> {
+  const res = await fetch("/api/py/admin/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passcode }),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function logoutAdmin(token: string): Promise<void> {
+  await fetch("/api/py/admin/auth/logout", {
+    method: "POST",
+    headers: adminHeaders(token),
+  });
+}
+
+export interface VisitorFilterQuery {
+  range?: DateRangePreset;
+  start_date?: string;
+  end_date?: string;
+  source?: "all" | VisitorLocationSource;
+  visitor_type?: "all" | "new" | "returning";
+  search?: string;
+  sort?: "latest" | "started" | "duration" | "page_views" | "visitor";
+  dir?: "asc" | "desc";
+  page?: number;
+  page_size?: number;
+}
+
+function buildQueryString(params: VisitorFilterQuery): string {
+  const qs = new URLSearchParams();
+  if (params.range) qs.set("range", params.range);
+  if (params.start_date) qs.set("start_date", params.start_date);
+  if (params.end_date) qs.set("end_date", params.end_date);
+  if (params.source) qs.set("source", params.source);
+  if (params.visitor_type) qs.set("visitor_type", params.visitor_type);
+  if (params.search) qs.set("search", params.search);
+  if (params.sort) qs.set("sort", params.sort);
+  if (params.dir) qs.set("dir", params.dir);
+  if (params.page !== undefined) qs.set("page", String(params.page));
+  if (params.page_size !== undefined) qs.set("page_size", String(params.page_size));
+  return qs.toString();
+}
+
+export async function fetchAdminOverview(
+  token: string,
+  params: Pick<VisitorFilterQuery, "range" | "start_date" | "end_date"> = {}
+): Promise<VisitorOverviewPayload> {
+  const qs = buildQueryString(params);
+  const res = await fetch(`/api/py/admin/overview${qs ? `?${qs}` : ""}`, {
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow<VisitorOverviewPayload>(res);
+}
+
+export async function fetchAdminMapMarkers(
+  token: string,
+  source: "all" | "gps" | "ip" = "all"
+): Promise<{ markers: VisitorMapMarker[]; refreshed_at: string }> {
+  const res = await fetch(`/api/py/admin/map?source=${encodeURIComponent(source)}`, {
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function fetchAdminVisitors(
+  token: string,
+  params: VisitorFilterQuery = {}
+): Promise<VisitorListPayload> {
+  const qs = buildQueryString(params);
+  const res = await fetch(`/api/py/admin/visitors${qs ? `?${qs}` : ""}`, {
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow<VisitorListPayload>(res);
+}
+
+export async function fetchAdminVisitorDetail(
+  token: string,
+  visitorId: string
+): Promise<VisitorDetailPayload> {
+  const res = await fetch(`/api/py/admin/visitors/${encodeURIComponent(visitorId)}`, {
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow<VisitorDetailPayload>(res);
+}
+
+export async function deleteAdminVisitorRecord(
+  token: string,
+  visitorId: string
+): Promise<{ deleted: boolean; visitor_id: string }> {
+  const res = await fetch(`/api/py/admin/visitors/${encodeURIComponent(visitorId)}`, {
+    method: "DELETE",
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function fetchAdminAnalytics(
+  token: string,
+  params: Pick<VisitorFilterQuery, "range" | "start_date" | "end_date"> = {}
+): Promise<VisitorAnalyticsPayload> {
+  const qs = buildQueryString(params);
+  const res = await fetch(`/api/py/admin/analytics${qs ? `?${qs}` : ""}`, {
+    headers: adminHeaders(token),
+  });
+  return parseJsonOrThrow<VisitorAnalyticsPayload>(res);
+}
+
+export async function updateAdminPrivacySettings(
+  token: string,
+  payload: {
+    retention_days?: number;
+    ip_geo_provider?: string;
+    run_cleanup?: boolean;
+  }
+): Promise<{
+  retention_days: number;
+  ip_geo_provider: string;
+  pruned_count: number;
+}> {
+  const res = await fetch("/api/py/admin/settings", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...adminHeaders(token),
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function acknowledgeAdminNotification(
+  token: string,
+  id?: number
+): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/py/admin/notifications/ack", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...adminHeaders(token),
+    },
+    body: JSON.stringify(id !== undefined ? { id } : {}),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function downloadAdminVisitorsCsv(
+  token: string,
+  params: VisitorFilterQuery = {}
+): Promise<void> {
+  const qs = buildQueryString(params);
+  const res = await fetch(`/api/py/admin/visitors/export${qs ? `?${qs}` : ""}`, {
+    headers: adminHeaders(token),
+  });
+  if (!res.ok) {
+    throw new Error(`Export failed with status ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "meditrack_visitor_analytics.csv";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 

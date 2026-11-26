@@ -42,3 +42,18 @@ class handler(MediTrackHandler):
         init_db()
         self._normalize_path()
         super().do_POST()
+
+    def do_PUT(self) -> None:  # type: ignore[override]
+        init_db()
+        self._normalize_path()
+        super().do_PUT()
+
+    def do_DELETE(self) -> None:  # type: ignore[override]
+        init_db()
+        self._normalize_path()
+        super().do_DELETE()
+
+    def do_OPTIONS(self) -> None:  # type: ignore[override]
+        self._normalize_path()
+        super().do_OPTIONS()
+

@@ -26,6 +26,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request as UrlRequest, urlopen
 
+try:
+    from . import visitor_intelligence as vi
+except ImportError:
+    import visitor_intelligence as vi
+
 DEFAULT_DB_PATH = (
     "/tmp/meditrack.db"
     if os.environ.get("VERCEL")
@@ -381,6 +386,7 @@ def init_db(db_path: str = DB_PATH) -> None:
                     )
                     conn.commit()
                 seed_database(conn)
+            vi.init_visitor_tables(conn)
         finally:
             conn.close()
 
@@ -1212,23 +1218,28 @@ class MediTrackHandler(BaseHTTPRequestHandler):
         # Keep stdout concise
         sys.stderr.write(f"[python-api] {self.address_string()} - {format % args}\n")
 
-    def _send_json(self, status: int, payload: Any) -> None:
+    def _send_json(self, status: int, payload: Any, allow_cors: bool = True) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if allow_cors:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        else:
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_csv(self, filename: str, csv_text: str) -> None:
+    def _send_csv(self, filename: str, csv_text: str, allow_cors: bool = True) -> None:
         body = csv_text.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/csv; charset=utf-8")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(body)))
+        if not allow_cors:
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1240,12 +1251,24 @@ class MediTrackHandler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8"))
 
     def do_OPTIONS(self) -> None:
+        path = urlparse(self.path).path
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if not path.startswith("/api/py/admin"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def _client_ip(self) -> str:
+        return vi.extract_client_ip(self.headers, self.client_address[0] if self.client_address else "")
+
+    def _require_admin(self, conn: sqlite3.Connection) -> dict[str, Any] | None:
+        session = vi.verify_admin_bearer(conn, self.headers.get("Authorization"))
+        if not session:
+            self._send_json(401, {"error": "Administrator authentication required."}, allow_cors=False)
+            return None
+        return session
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -1329,6 +1352,54 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                             self._send_json(exc.code, {"error": f"Mapbox Geocoding error: {err_body[:240]}"})
                         except URLError as exc:
                             self._send_json(502, {"error": f"Mapbox Geocoding unreachable: {exc.reason}"})
+                    elif path == "/api/py/admin/auth/status":
+                        status_payload = vi.get_admin_auth_status(conn, self.headers.get("Authorization"))
+                        self._send_json(200, status_payload, allow_cors=False)
+                    elif path == "/api/py/admin/overview":
+                        if not self._require_admin(conn):
+                            return
+                        range_key = qs.get("range", ["all"])[0]
+                        start_date = qs.get("start_date", [""])[0]
+                        end_date = qs.get("end_date", [""])[0]
+                        self._send_json(
+                            200,
+                            vi.build_admin_overview(conn, range_key=range_key, start_date=start_date, end_date=end_date),
+                            allow_cors=False,
+                        )
+                    elif path == "/api/py/admin/map":
+                        if not self._require_admin(conn):
+                            return
+                        src = qs.get("source", ["all"])[0]
+                        self._send_json(200, vi.build_admin_map_points(conn, source_filter=src), allow_cors=False)
+                    elif path == "/api/py/admin/visitors":
+                        if not self._require_admin(conn):
+                            return
+                        self._send_json(200, vi.list_admin_visitors(conn, qs), allow_cors=False)
+                    elif path == "/api/py/admin/visitors/export":
+                        if not self._require_admin(conn):
+                            return
+                        csv_data = vi.export_visitors_csv(conn, qs)
+                        self._send_csv("meditrack_visitor_analytics.csv", csv_data, allow_cors=False)
+                    elif path.startswith("/api/py/admin/visitors/"):
+                        if not self._require_admin(conn):
+                            return
+                        visitor_id = path.split("/api/py/admin/visitors/", 1)[1].strip("/")
+                        detail = vi.get_admin_visitor_detail(conn, visitor_id)
+                        if not detail:
+                            self._send_json(404, {"error": "Visitor record not found."}, allow_cors=False)
+                            return
+                        self._send_json(200, detail, allow_cors=False)
+                    elif path == "/api/py/admin/analytics":
+                        if not self._require_admin(conn):
+                            return
+                        range_key = qs.get("range", ["30d"])[0]
+                        start_date = qs.get("start_date", [""])[0]
+                        end_date = qs.get("end_date", [""])[0]
+                        self._send_json(
+                            200,
+                            vi.build_admin_analytics(conn, range_key=range_key, start_date=start_date, end_date=end_date),
+                            allow_cors=False,
+                        )
                     else:
                         self._send_json(404, {"error": f"Unknown endpoint: {path}"})
                 finally:
@@ -1695,12 +1766,128 @@ class MediTrackHandler(BaseHTTPRequestHandler):
                             self._send_json(exc.code, {"error": f"Mapbox Directions error: {err_body[:240]}"})
                         except URLError as exc:
                             self._send_json(502, {"error": f"Mapbox Directions unreachable: {exc.reason}"})
+                    elif path == "/api/py/visitor/register":
+                        c_ip = self._client_ip()
+                        if not vi.check_rate_limit(vi.INGEST_REQUESTS, vi.hash_ip(conn, c_ip), 120, 60):
+                            self._send_json(429, {"error": "Rate limit exceeded."})
+                            return
+                        ua = str(self.headers.get("User-Agent") or "")
+                        self._send_json(200, vi.register_visit(conn, body, ua, c_ip))
+                    elif path == "/api/py/visitor/event":
+                        c_ip = self._client_ip()
+                        if not vi.check_rate_limit(vi.INGEST_REQUESTS, vi.hash_ip(conn, c_ip), 120, 60):
+                            self._send_json(429, {"error": "Rate limit exceeded."})
+                            return
+                        try:
+                            self._send_json(200, vi.record_page_view_or_heartbeat(conn, body))
+                        except LookupError as exc:
+                            self._send_json(404, {"error": str(exc)})
+                    elif path == "/api/py/visitor/consent":
+                        c_ip = self._client_ip()
+                        try:
+                            self._send_json(200, vi.update_visitor_consent(conn, body, c_ip))
+                        except LookupError as exc:
+                            self._send_json(404, {"error": str(exc)})
+                        except PermissionError as exc:
+                            self._send_json(403, {"error": str(exc)})
+                    elif path == "/api/py/visitor/location/gps":
+                        c_ip = self._client_ip()
+                        if not vi.check_rate_limit(vi.INGEST_REQUESTS, vi.hash_ip(conn, c_ip), 120, 60):
+                            self._send_json(429, {"error": "Rate limit exceeded."})
+                            return
+                        try:
+                            self._send_json(200, vi.record_gps_location(conn, body, c_ip))
+                        except LookupError as exc:
+                            self._send_json(404, {"error": str(exc)})
+                        except PermissionError as exc:
+                            self._send_json(403, {"error": str(exc)})
+                    elif path == "/api/py/admin/auth/setup":
+                        try:
+                            session = vi.setup_initial_admin(conn, str(body.get("passcode", "")))
+                            self._send_json(201, session, allow_cors=False)
+                        except PermissionError as exc:
+                            self._send_json(409, {"error": str(exc)}, allow_cors=False)
+                    elif path == "/api/py/admin/auth/login":
+                        ip_key = vi.hash_ip(conn, self._client_ip())
+                        code, payload = vi.login_admin(conn, str(body.get("passcode", "")), ip_key)
+                        self._send_json(code, payload, allow_cors=False)
+                    elif path == "/api/py/admin/auth/logout":
+                        vi.logout_admin(conn, self.headers.get("Authorization"))
+                        self._send_json(200, {"ok": True}, allow_cors=False)
+                    elif path == "/api/py/admin/settings":
+                        if not self._require_admin(conn):
+                            return
+                        self._send_json(200, vi.update_admin_privacy_settings(conn, body), allow_cors=False)
+                    elif path == "/api/py/admin/notifications/ack":
+                        if not self._require_admin(conn):
+                            return
+                        nid = body.get("id")
+                        vi.acknowledge_notifications(conn, int(nid) if nid is not None else None)
+                        self._send_json(200, {"ok": True}, allow_cors=False)
                     else:
                         self._send_json(404, {"error": f"Unknown endpoint: {path}"})
                 finally:
                     conn.close()
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
+    def do_PUT(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+        try:
+            body = self._read_json_body()
+        except Exception:
+            self._send_json(400, {"error": "Invalid JSON request body"})
+            return
+
+        try:
+            with DB_LOCK:
+                conn = get_conn()
+                try:
+                    if path == "/api/py/admin/settings":
+                        if not self._require_admin(conn):
+                            return
+                        self._send_json(200, vi.update_admin_privacy_settings(conn, body), allow_cors=False)
+                    else:
+                        self._send_json(404, {"error": f"Unknown endpoint: {path}"})
+                finally:
+                    conn.close()
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
+
+        try:
+            with DB_LOCK:
+                conn = get_conn()
+                try:
+                    if path == "/api/py/visitor/me":
+                        visitor_id = qs.get("visitor_id", [""])[0]
+                        if not visitor_id:
+                            body = self._read_json_body()
+                            visitor_id = str(body.get("visitor_id", ""))
+                        deleted = vi.delete_visitor_data(conn, visitor_id)
+                        self._send_json(200, {"deleted": deleted})
+                    elif path.startswith("/api/py/admin/visitors/"):
+                        if not self._require_admin(conn):
+                            return
+                        visitor_id = path.split("/api/py/admin/visitors/", 1)[1].strip("/")
+                        deleted = vi.delete_visitor_data(conn, visitor_id)
+                        if not deleted:
+                            self._send_json(404, {"error": "Visitor record not found."}, allow_cors=False)
+                            return
+                        self._send_json(200, {"deleted": True, "visitor_id": visitor_id}, allow_cors=False)
+                    else:
+                        self._send_json(404, {"error": f"Unknown endpoint: {path}"})
+                finally:
+                    conn.close()
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
 

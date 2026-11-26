@@ -182,6 +182,232 @@ class MediTrackPythonTests(unittest.TestCase):
         self.assertEqual(directions["durationMin"], 27)
         self.assertEqual(directions["steps"][0]["distanceText"], "1.4 km")
 
+    def test_visitor_registration_returning_and_gps_consent_lifecycle(self) -> None:
+        import visitor_intelligence as vi
+        from unittest.mock import patch
+
+        conn = meditrack_app.get_conn(self.db_path)
+        try:
+            # 1. New visitor registers without GPS yet (and with mocked IP geo fallback)
+            mocked_ip_geo = {
+                "country": "India",
+                "region": "Madhya Pradesh",
+                "city": "Bhopal",
+                "latitude": 23.2599,
+                "longitude": 77.4126,
+            }
+            with patch.object(vi, "lookup_ip_location", return_value=mocked_ip_geo):
+                reg1 = vi.register_visit(
+                    conn,
+                    {
+                        "landing_page": "/?tab=overview",
+                        "page_title": "MediTrack Overview",
+                        "referrer_source": "https://google.com/search?q=meditrack",
+                    },
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36",
+                    "49.36.120.10",
+                )
+            self.assertFalse(reg1["is_returning"])
+            self.assertEqual(reg1["location_source"], "ip")
+            vid = reg1["visitor_id"]
+            sid1 = reg1["session_id"]
+
+            # Raw IP must never be stored in visitor_sessions
+            sess_row = conn.execute("SELECT * FROM visitor_sessions WHERE session_id = ?", (sid1,)).fetchone()
+            self.assertNotIn("49.36.120.10", dict(sess_row).values())
+            self.assertEqual(sess_row["referrer_source"], "google.com")
+            self.assertEqual(sess_row["browser"], "Chrome")
+            self.assertEqual(sess_row["device_category"], "desktop")
+
+            # 2. Recording GPS without explicit consent must be rejected
+            with self.assertRaises(PermissionError):
+                vi.record_gps_location(
+                    conn,
+                    {"visitor_id": vid, "session_id": sid1, "latitude": 23.2106, "longitude": 77.4574},
+                    "49.36.120.10",
+                )
+
+            # 3. Granting GPS consent saves precise coordinates and overrides IP location
+            vi.update_visitor_consent(
+                conn,
+                {"visitor_id": vid, "session_id": sid1, "consent_type": "gps", "status": "granted"},
+                "49.36.120.10",
+            )
+            gps_res = vi.record_gps_location(
+                conn,
+                {
+                    "visitor_id": vid,
+                    "session_id": sid1,
+                    "latitude": 23.2106,
+                    "longitude": 77.4574,
+                    "accuracy_m": 14.2,
+                },
+                "49.36.120.10",
+            )
+            self.assertEqual(gps_res["location_source"], "gps")
+            self.assertEqual(gps_res["accuracy_m"], 14.2)
+
+            # 4. Continuous GPS requires separate explicit consent
+            with self.assertRaises(PermissionError):
+                vi.record_gps_location(
+                    conn,
+                    {
+                        "visitor_id": vid,
+                        "session_id": sid1,
+                        "latitude": 23.211,
+                        "longitude": 77.458,
+                        "is_continuous": True,
+                    },
+                    "49.36.120.10",
+                )
+
+            # 5. Returning visitor with same visitor_id but new session_id is flagged returning
+            with patch.object(vi, "lookup_ip_location", return_value=None):
+                reg2 = vi.register_visit(
+                    conn,
+                    {"visitor_id": vid, "landing_page": "/?tab=routes"},
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile Safari/604.1",
+                    "49.36.120.10",
+                )
+            self.assertTrue(reg2["is_returning"])
+
+            # 6. Revoking GPS consent wipes stored GPS coordinates cleanly
+            rev_res = vi.update_visitor_consent(
+                conn,
+                {"visitor_id": vid, "session_id": sid1, "consent_type": "gps", "status": "revoked"},
+                "49.36.120.10",
+            )
+            self.assertEqual(rev_res["gps_consent_status"], "revoked")
+            cleared_sess = conn.execute("SELECT * FROM visitor_sessions WHERE session_id = ?", (sid1,)).fetchone()
+            self.assertIsNone(cleared_sess["latitude"])
+            self.assertIsNone(cleared_sess["longitude"])
+            self.assertEqual(cleared_sess["location_source"], "none")
+        finally:
+            conn.close()
+
+    def test_admin_auth_analytics_csv_and_retention(self) -> None:
+        import visitor_intelligence as vi
+        from unittest.mock import patch
+
+        conn = meditrack_app.get_conn(self.db_path)
+        try:
+            # Unauthorized token check fails
+            self.assertIsNone(vi.verify_admin_bearer(conn, None))
+            self.assertIsNone(vi.verify_admin_bearer(conn, "Bearer invalid-token"))
+
+            # First-run setup creates scrypt hash and issues session token
+            old_env = os.environ.pop("ADMIN_PASSCODE", None)
+            try:
+                setup = vi.setup_initial_admin(conn, "SecureAdmin2026!")
+                self.assertIn("token", setup)
+                verified = vi.verify_admin_bearer(conn, f"Bearer {setup['token']}")
+                self.assertIsNotNone(verified)
+
+                # Bad password rejected, good password works
+                code_bad, _ = vi.login_admin(conn, "wrong-pass", "test-ip-hash")
+                self.assertEqual(code_bad, 401)
+                code_ok, login_ok = vi.login_admin(conn, "SecureAdmin2026!", "test-ip-hash")
+                self.assertEqual(code_ok, 200)
+                self.assertIsNotNone(vi.verify_admin_bearer(conn, f"Bearer {login_ok['token']}"))
+            finally:
+                if old_env is not None:
+                    os.environ["ADMIN_PASSCODE"] = old_env
+
+            # Seed 2 visitors (1 GPS, 1 IP) and check overview, analytics, map, filters, CSV, retention
+            with patch.object(
+                vi,
+                "lookup_ip_location",
+                return_value={"country": "India", "region": "MP", "city": "Indore", "latitude": 22.7196, "longitude": 75.8577},
+            ):
+                v_ip = vi.register_visit(conn, {"landing_page": "/?tab=overview"}, "Mozilla/5.0 Firefox/130.0", "103.21.124.5")
+                v_gps = vi.register_visit(conn, {"landing_page": "/?tab=routes"}, "Mozilla/5.0 Chrome/131.0", "103.21.124.6")
+
+            vi.record_gps_location(
+                conn,
+                {
+                    "visitor_id": v_gps["visitor_id"],
+                    "session_id": v_gps["session_id"],
+                    "latitude": 23.2599,
+                    "longitude": 77.4126,
+                    "accuracy_m": 12.0,
+                    "consent_granted": True,
+                    "city": "Bhopal",
+                    "region": "Madhya Pradesh",
+                    "country": "India",
+                },
+                "103.21.124.6",
+            )
+            vi.record_page_view_or_heartbeat(
+                conn,
+                {
+                    "visitor_id": v_gps["visitor_id"],
+                    "session_id": v_gps["session_id"],
+                    "event_type": "pageview",
+                    "page_path": "/?tab=compliance",
+                    "duration_sec": 45,
+                },
+            )
+
+            ov = vi.build_admin_overview(conn)
+            self.assertEqual(ov["kpis"]["unique_visitors"], 2)
+            self.assertEqual(ov["kpis"]["gps_visitors"], 1)
+            self.assertEqual(ov["kpis"]["ip_visitors"], 1)
+            self.assertGreaterEqual(ov["kpis"]["total_page_views"], 3)
+
+            m = vi.build_admin_map_points(conn)
+            self.assertEqual(len(m["markers"]), 2)
+            sources = {pt["visitor_id"]: pt["location_source"] for pt in m["markers"]}
+            self.assertEqual(sources[v_gps["visitor_id"]], "gps")
+            self.assertEqual(sources[v_ip["visitor_id"]], "ip")
+
+            filtered = vi.list_admin_visitors(conn, {"source": ["gps"], "search": ["Bhopal"]})
+            self.assertEqual(filtered["total"], 1)
+            self.assertEqual(filtered["records"][0]["visitor_id"], v_gps["visitor_id"])
+
+            analytics = vi.build_admin_analytics(conn)
+            self.assertGreaterEqual(len(analytics["daily_traffic"]), 1)
+            self.assertGreaterEqual(len(analytics["top_pages"]), 1)
+
+            csv_out = vi.export_visitors_csv(conn, {})
+            self.assertIn("GPS (Consented)", csv_out)
+            self.assertIn("IP Estimate (Approximate)", csv_out)
+
+            # Data retention prunes backdated sessions & profile
+            conn.execute(
+                "UPDATE visitor_sessions SET last_active_at = '2020-01-01T00:00:00+00:00' WHERE visitor_id = ?",
+                (v_ip["visitor_id"],),
+            )
+            conn.execute(
+                "UPDATE visitor_profiles SET last_seen_at = '2020-01-01T00:00:00+00:00' WHERE visitor_id = ?",
+                (v_ip["visitor_id"],),
+            )
+            conn.execute(
+                "UPDATE visitor_location_events SET recorded_at = '2020-01-01T00:00:00+00:00' WHERE visitor_id = ?",
+                (v_ip["visitor_id"],),
+            )
+            conn.commit()
+            pruned = vi.prune_old_visitor_data(conn, 30)
+            self.assertGreaterEqual(pruned, 1)
+            self.assertIsNone(vi.get_admin_visitor_detail(conn, v_ip["visitor_id"]))
+        finally:
+            conn.close()
+
+    def test_ssrf_and_configurable_ip_geo_safety(self) -> None:
+        import visitor_intelligence as vi
+
+        self.assertFalse(vi.is_safe_public_https_url("http://ipwho.is/8.8.8.8"))
+        self.assertFalse(vi.is_safe_public_https_url("https://127.0.0.1/geo"))
+        self.assertFalse(vi.is_safe_public_https_url("https://169.254.169.254/latest/meta-data"))
+        self.assertFalse(vi.is_safe_public_https_url("https://10.0.0.5/geo"))
+        self.assertTrue(vi.is_safe_public_https_url("https://ipwho.is/8.8.8.8"))
+
+        # Private/loopback client IP never triggers external geolocation lookup
+        self.assertIsNone(vi.build_ip_geo_url("ipwhois", "127.0.0.1"))
+        self.assertIsNone(vi.build_ip_geo_url("ipwhois", "192.168.1.5"))
+        self.assertEqual(vi.build_ip_geo_url("ipwhois", "8.8.8.8"), "https://ipwho.is/8.8.8.8")
+        self.assertEqual(vi.build_ip_geo_url("ipapi", "8.8.8.8"), "https://ipapi.co/8.8.8.8/json/")
+        self.assertIsNone(vi.build_ip_geo_url("disabled", "8.8.8.8"))
+
 
 if __name__ == "__main__":
     unittest.main()

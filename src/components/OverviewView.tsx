@@ -95,8 +95,7 @@ export function OverviewView({ data, onNavigate }: OverviewViewProps) {
               Smart Medical Waste Segregation and Condition-Based Collection
             </h1>
             <p className="text-sm text-slate-600 leading-relaxed">
-              Replaces manual sorting and fixed-schedule pickups found in UPBMW MIS QR and
-              Odisha BMWMTS with automated category segregation, ultrasonic fill-level alerts,
+              Replaces manual sorting and fixed-schedule pickups  with automated category segregation, ultrasonic fill-level alerts,
               Bhopal fleet route optimization, and QR chain-of-custody reporting.
             </p>
           </div>
